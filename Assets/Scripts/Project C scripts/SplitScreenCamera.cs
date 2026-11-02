@@ -1,3 +1,5 @@
+using System;
+using System.Reflection;
 using UnityEngine;
 using Ilumisoft.HealthSystem;
 
@@ -121,9 +123,48 @@ public class SplitScreenCamera : MonoBehaviour
             if (dynamicCamera.IsSplit)
             {
                 v.two = true;
-                v.slanted = true;
                 v.lineCentre = dynamicCamera.LineCentre;
                 v.lineNormal = dynamicCamera.LineNormal;
+
+                if (dynamicCamera.IsPixelPerfectComposite)
+                {
+                    // Report the visible rectangular portions rather than the cameras' full-size
+                    // render textures. HUD layout code uses these rectangles in screen pixels.
+                    float x = Mathf.Clamp(v.lineCentre.x, 0f, w);
+                    float y = Mathf.Clamp(v.lineCentre.y, 0f, h);
+                    if (Mathf.Abs(v.lineNormal.x) >= Mathf.Abs(v.lineNormal.y))
+                    {
+                        v.slanted = false;
+                        if (v.lineNormal.x >= 0f)
+                        {
+                            v.view1 = new Rect(0f, 0f, x, h);
+                            v.view2 = new Rect(x, 0f, w - x, h);
+                        }
+                        else
+                        {
+                            v.view1 = new Rect(x, 0f, w - x, h);
+                            v.view2 = new Rect(0f, 0f, x, h);
+                        }
+                    }
+                    else
+                    {
+                        v.slanted = false;
+                        if (v.lineNormal.y >= 0f)
+                        {
+                            v.view1 = new Rect(0f, 0f, w, y);
+                            v.view2 = new Rect(0f, y, w, h - y);
+                        }
+                        else
+                        {
+                            v.view1 = new Rect(0f, y, w, h - y);
+                            v.view2 = new Rect(0f, 0f, w, y);
+                        }
+                    }
+                }
+                else
+                {
+                    v.slanted = true;
+                }
             }
             return v;
         }
@@ -151,7 +192,23 @@ public class SplitScreenCamera : MonoBehaviour
     // Used by DynamicScreenCamera, which shares these cameras.
     public Camera Camera1 { get { return camera1; } }
     public Camera Camera2 { get { return camera2; } }
-    public float BaseSize { get { return baseSize; } }
+    // Pixel Perfect Camera owns orthographicSize when present. Read its live result instead of the
+    // cached scene value, because the package recalculates the projection for the current resolution.
+    public float BaseSize
+    {
+        get
+        {
+            if (camera1 != null && camera1.orthographic && HasActivePixelPerfectCamera(camera1))
+                return Mathf.Max(0.01f, camera1.orthographicSize);
+            return baseSize;
+        }
+    }
+
+    /// <summary>True when the source camera has an enabled Unity Pixel Perfect Camera component.</summary>
+    public bool UsesPixelPerfectCamera
+    {
+        get { return camera1 != null && HasActivePixelPerfectCamera(camera1); }
+    }
 
     /// <summary>Camera 2, made on the spot (a copy of Camera 1) if there isn't one yet.</summary>
     public Camera GetCamera2()
@@ -177,6 +234,9 @@ public class SplitScreenCamera : MonoBehaviour
     private float baseSize = 5f;
     private bool createdCamera2;
     private bool dynamicRunning;
+    // True when DynamicScreenCamera is being used as a rectangular Pixel Perfect compositor rather
+    // than the optional diagonal Adaptive renderer. This prevents transitions from reusing the wrong mode.
+    private bool pixelPerfectCompositeRunning;
     private bool snapNextFrame;
     private bool shownDynamic;
     private SplitMode shownMode = (SplitMode)(-1);
@@ -199,10 +259,9 @@ public class SplitScreenCamera : MonoBehaviour
         SwitchOffOldFollow(camera1);
         camera1.rect = FullRect;
 
-        if (camera2 != null)
+        if (camera2 != null && camera2 != camera1)
         {
-            SwitchOffOldFollow(camera2);
-            camera2.enabled = false;
+            PrepareSecondaryCamera(camera2); // also copies Pixel Perfect Camera settings
         }
     }
 
@@ -216,6 +275,7 @@ public class SplitScreenCamera : MonoBehaviour
         if (Current == this) Current = null;
         if (dynamicRunning && dynamicCamera != null) dynamicCamera.Release();
         dynamicRunning = false;
+        pixelPerfectCompositeRunning = false;
 
         // Leave the screen as it was: one full view.
         if (camera1 != null) camera1.rect = FullRect;
@@ -277,6 +337,10 @@ public class SplitScreenCamera : MonoBehaviour
 
     private void LateUpdate()
     {
+        // A duplicated camera object can briefly run its cloned controller before Awake disables it. Reassert this
+        // active controller as the scene's current split-screen camera after that setup has settled.
+        if (Current != this) Current = this;
+
         // Players have moved by now (their Update and the physics step both ran), so the cameras follow the final spot.
         Transform t1 = Resolve(1, player1);
         Transform t2 = Resolve(2, player2);
@@ -297,18 +361,38 @@ public class SplitScreenCamera : MonoBehaviour
             offsetKnown = true;
         }
 
-        // Dynamic Adaptive: the diagonal split is drawn by DynamicScreenCamera, which takes over both cameras.
+        // Pixel Perfect Camera expects to own a full viewport. The standard split path shrinks
+        // Camera.rect, which makes the package recalculate against the wrong viewport. Render-texture
+        // compositing keeps each Pixel Perfect Camera full-screen and masks the result into the halves.
         bool useDynamic = WantsDynamic();
-        if (dynamicRunning && !useDynamic) LeaveDynamic();
+        bool usePixelPerfectComposite = UsesPixelPerfectCamera && !useDynamic;
+
+        // If changing compositor modes (or returning to ordinary cameras), release the prior render
+        // textures and reset camera state before the next path takes ownership.
+        if (dynamicRunning && (pixelPerfectCompositeRunning != usePixelPerfectComposite)) LeaveDynamic();
+        else if (dynamicRunning && !useDynamic && !usePixelPerfectComposite) LeaveDynamic();
 
         bool snap = first || snapNextFrame;
         snapNextFrame = false;
 
-        if (useDynamic)
+        if (useDynamic || usePixelPerfectComposite)
         {
             bool entering = !dynamicRunning;
             dynamicRunning = true;
-            dynamicCamera.Tick(this, both, has1, has2, p1, p2, snap || entering);
+            pixelPerfectCompositeRunning = usePixelPerfectComposite;
+            if (dynamicCamera == null) dynamicCamera = GetComponent<DynamicScreenCamera>();
+            if (dynamicCamera == null) dynamicCamera = gameObject.AddComponent<DynamicScreenCamera>();
+
+            if (useDynamic)
+            {
+                dynamicCamera.Tick(this, both, has1, has2, p1, p2, snap || entering);
+            }
+            else
+            {
+                dynamicCamera.TickPixelPerfect(this, both, has1, has2, p1, p2, snap || entering);
+                // Keep Retro mode's existing rule: Player 2 cannot leave Camera 1's visible area.
+                if (mode == SplitMode.Retro && both) ClampToScreen(t2);
+            }
             return;
         }
 
@@ -400,6 +484,7 @@ public class SplitScreenCamera : MonoBehaviour
     private void LeaveDynamic()
     {
         dynamicRunning = false;
+        pixelPerfectCompositeRunning = false;
         if (dynamicCamera != null) dynamicCamera.Release();
 
         camera1.rect = FullRect;
@@ -417,23 +502,178 @@ public class SplitScreenCamera : MonoBehaviour
     {
         Transform t;
         CoopHealth health;
+        bool explicitlyAssigned = manual != null;
 
-        if (manual != null)
+        if (explicitlyAssigned)
         {
+            // An Inspector assignment is an explicit camera target. Do not discard it merely because the saved
+            // LocalCoop toggle is off; users can test / use two cameras with two scene objects without a manager.
             if (!manual.gameObject.activeInHierarchy) return null;
             t = manual;
             health = manual.GetComponent<CoopHealth>();
         }
         else
         {
-            health = CoopHealth.Get(number);   // only players that are switched on are listed
+            // Automatically discovered players still obey the co-op rules and must be registered as CoopHealth.
+            if (!CoopRules.Counts(number)) return null;
+            health = CoopHealth.Get(number);
             if (health == null) return null;
             t = health.transform;
         }
 
         if (health != null && !health.IsAlive) return null;   // lost all their health
-        if (!CoopRules.Counts(number)) return null;           // single player mode ignores this player
+
+        // Explicit Single Player Mode remains authoritative, including when its chosen target is not Player 1.
+        if (CoopRules.SinglePlayerMode && number != CoopRules.TrackedPlayer) return null;
         return t;
+    }
+
+    // A manually duplicated Camera 1 GameObject may also contain copies of this controller, the diagonal splitter,
+    // or an AudioListener. Those components conflict with the single controller that owns both views.
+    private void PrepareSecondaryCamera(Camera cam)
+    {
+        if (cam == null || cam == camera1) return;
+
+        if (cam.gameObject != camera1.gameObject)
+        {
+            SplitScreenCamera[] controllers = cam.GetComponents<SplitScreenCamera>();
+            for (int i = 0; i < controllers.Length; i++)
+            {
+                SplitScreenCamera other = controllers[i];
+                if (other != null && other != this && other.enabled)
+                {
+                    other.enabled = false;
+                    Debug.LogWarning("SplitScreenCamera: disabled a duplicate SplitScreenCamera on Camera 2. Only Camera 1 should own this controller.", cam);
+                }
+            }
+
+            DynamicScreenCamera[] dynamicControllers = cam.GetComponents<DynamicScreenCamera>();
+            for (int i = 0; i < dynamicControllers.Length; i++)
+            {
+                DynamicScreenCamera other = dynamicControllers[i];
+                if (other != null && other != dynamicCamera && other.enabled) other.enabled = false;
+            }
+
+            AudioListener listener = cam.GetComponent<AudioListener>();
+            if (listener != null) listener.enabled = false;
+        }
+
+        SwitchOffOldFollow(cam);
+        cam.targetTexture = null;
+        cam.depth = camera1.depth + 1f;
+        cam.enabled = false;
+        SynchronizePixelPerfectCamera(cam);
+    }
+
+    // ------------------------------------------------------------ Pixel Perfect Camera compatibility
+
+    // Pixel Perfect Camera exists in two different Unity implementations: the Built-in package uses
+    // UnityEngine.U2D.PixelPerfectCamera, modern URP uses UnityEngine.Rendering.Universal.PixelPerfectCamera,
+    // and older URP releases used UnityEngine.Experimental.Rendering.Universal.PixelPerfectCamera.
+    // Reflection lets these scripts support either implementation without a hard package dependency.
+    private static Component FindPixelPerfectCamera(Camera cam)
+    {
+        if (cam == null) return null;
+        Component[] components = cam.GetComponents<Component>();
+        for (int i = 0; i < components.Length; i++)
+        {
+            Component component = components[i];
+            if (component == null) continue;
+
+            Type type = component.GetType();
+            if (type.Name != "PixelPerfectCamera") continue;
+
+            string fullName = type.FullName ?? string.Empty;
+            if (fullName == "UnityEngine.U2D.PixelPerfectCamera" ||
+                fullName == "UnityEngine.Rendering.Universal.PixelPerfectCamera" ||
+                fullName == "UnityEngine.Experimental.Rendering.Universal.PixelPerfectCamera")
+                return component;
+        }
+        return null;
+    }
+
+    private static bool HasActivePixelPerfectCamera(Camera cam)
+    {
+        Component component = FindPixelPerfectCamera(cam);
+        Behaviour behaviour = component as Behaviour;
+        return component != null && (behaviour == null || behaviour.enabled);
+    }
+
+    private void SynchronizePixelPerfectCamera(Camera targetCamera)
+    {
+        if (camera1 == null || targetCamera == null || targetCamera == camera1) return;
+
+        Component source = FindPixelPerfectCamera(camera1);
+        if (source == null) return;
+
+        Component target = targetCamera.GetComponent(source.GetType());
+        if (target == null)
+        {
+            try
+            {
+                target = targetCamera.gameObject.AddComponent(source.GetType());
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("SplitScreenCamera: could not add the same Pixel Perfect Camera component to Camera 2. " + e.Message, targetCamera);
+                return;
+            }
+        }
+
+        // Copy documented settings through the component API, not private package internals. The whitelist
+        // supports the legacy boolean properties and the modern URP enum properties without copying inherited
+        // UnityEngine.Component members such as "name".
+        string[] settingNames =
+        {
+            "assetsPPU", "refResolutionX", "refResolutionY",
+            "cropFrameX", "cropFrameY", "cropFrame", "stretchFill",
+            "upscaleRT", "pixelSnapping", "gridSnapping"
+        };
+        for (int i = 0; i < settingNames.Length; i++)
+        {
+            PropertyInfo property = source.GetType().GetProperty(settingNames[i], BindingFlags.Instance | BindingFlags.Public);
+            if (property == null || !property.CanRead || !property.CanWrite || property.GetIndexParameters().Length != 0) continue;
+            try
+            {
+                object value = property.GetValue(source, null);
+                property.SetValue(target, value, null);
+            }
+            catch (Exception)
+            {
+                // Some package properties are read-only in practice despite a setter being exposed.
+            }
+        }
+
+        Behaviour sourceBehaviour = source as Behaviour;
+        Behaviour targetBehaviour = target as Behaviour;
+        if (sourceBehaviour != null && targetBehaviour != null)
+            targetBehaviour.enabled = sourceBehaviour.enabled;
+    }
+
+    private static int GetPixelPerfectAssetsPPU(Camera cam)
+    {
+        return GetPixelPerfectAssetsPPU(FindPixelPerfectCamera(cam));
+    }
+
+    private static int GetPixelPerfectAssetsPPU(Component component)
+    {
+        if (component == null) return 0;
+        try
+        {
+            PropertyInfo ppu = component.GetType().GetProperty("assetsPPU", BindingFlags.Instance | BindingFlags.Public);
+            if (ppu != null && ppu.CanRead) return Convert.ToInt32(ppu.GetValue(component, null));
+        }
+        catch (Exception) { }
+        return 0;
+    }
+
+    private static Vector3 SnapToPixelGrid(Vector3 position, int ppu)
+    {
+        if (ppu <= 0) return position;
+        float worldPixel = 1f / ppu;
+        position.x = Mathf.Round(position.x / worldPixel) * worldPixel;
+        position.y = Mathf.Round(position.y / worldPixel) * worldPixel;
+        return position;
     }
 
     // ------------------------------------------------------------ adaptive
@@ -540,9 +780,19 @@ public class SplitScreenCamera : MonoBehaviour
         Vector3 target = focus + offset;
         Transform ct = cam.transform;
 
+        Component pixelPerfectComponent = FindPixelPerfectCamera(cam);
+        Behaviour pixelPerfectBehaviour = pixelPerfectComponent as Behaviour;
+        bool pixelPerfect = pixelPerfectComponent != null && (pixelPerfectBehaviour == null || pixelPerfectBehaviour.enabled);
+        int ppu = pixelPerfect ? GetPixelPerfectAssetsPPU(pixelPerfectComponent) : 0;
+        if (ppu > 0) target = SnapToPixelGrid(target, ppu);
+
         bool jump = snap || (snapDistance > 0f && (ct.position - target).sqrMagnitude > snapDistance * snapDistance);
         if (jump) ct.position = target;
         else ct.position = Vector3.Lerp(ct.position, target, Mathf.Min(1f, followSpeed * Time.deltaTime));
+
+        // Pixel-perfect artwork is easily disturbed by fractional camera movement. Snap the final camera
+        // transform to the same art-pixel grid used by Pixel Perfect Camera's assetsPPU setting.
+        if (ppu > 0) ct.position = SnapToPixelGrid(ct.position, ppu);
     }
 
     private void CreateCamera2()
@@ -550,15 +800,17 @@ public class SplitScreenCamera : MonoBehaviour
         GameObject go = new GameObject("Player 2 Camera");   // a root object, so it never inherits movement from Camera 1
         camera2 = go.AddComponent<Camera>();
         camera2.CopyFrom(camera1);
+        camera2.targetTexture = null;                        // do not inherit Camera 1's compositor RenderTexture
         camera2.depth = camera1.depth + 1f;                  // drawn on top of Camera 1 wherever they overlap
         camera2.enabled = false;                             // no AudioListener on purpose: Camera 1 keeps it
         createdCamera2 = true;
+        SynchronizePixelPerfectCamera(camera2);
     }
 
     // Half the world height that one FULL screen shows.
     private float FullHalfHeight()
     {
-        if (camera1.orthographic) return baseSize;
+        if (camera1.orthographic) return BaseSize;
         return Mathf.Abs(offset.z) * Mathf.Tan(camera1.fieldOfView * 0.5f * Mathf.Deg2Rad);
     }
 
