@@ -58,6 +58,14 @@ public class DirectButton
 
     private static readonly List<Vector2> Presses = new List<Vector2>(4);
     private static readonly Vector3[] Corners = new Vector3[4];
+    private static int _pressesFrame = -1;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetPressCache()
+    {
+        Presses.Clear();
+        _pressesFrame = -1;
+    }
 
     /// <summary>True on the single frame this control was tapped (or its hotkey was pressed).</summary>
     public bool WasTapped()
@@ -180,15 +188,18 @@ public class DirectButton
         return "its screen rectangle is " + a + " to " + b;
     }
 
-    // Gathers every press that began this frame (mouse + all touches) into a shared list.
+    // Gathers presses once per frame so every DirectButton shares the same input snapshot.
     private static void CollectPresses()
     {
+        if (_pressesFrame == Time.frameCount) return;
+
+        _pressesFrame = Time.frameCount;
         Presses.Clear();
 
 #if ENABLE_INPUT_SYSTEM
         Mouse mouse = Mouse.current;
         if (mouse != null && mouse.leftButton.wasPressedThisFrame)
-            Presses.Add(mouse.position.ReadValue());
+            AddUniquePress(mouse.position.ReadValue());
 
         Touchscreen touchscreen = Touchscreen.current;
         if (touchscreen != null)
@@ -197,22 +208,34 @@ public class DirectButton
             for (int i = 0; i < touches.Count; i++)
             {
                 if (touches[i].press.wasPressedThisFrame)
-                    Presses.Add(touches[i].position.ReadValue());
+                    AddUniquePress(touches[i].position.ReadValue());
             }
         }
 #endif
 
 #if ENABLE_LEGACY_INPUT_MANAGER
         if (Input.GetMouseButtonDown(0))
-            Presses.Add(Input.mousePosition);
+            AddUniquePress(Input.mousePosition);
 
         for (int i = 0; i < Input.touchCount; i++)
         {
             Touch t = Input.GetTouch(i);
-            if (t.phase == TouchPhase.Began)
-                Presses.Add(t.position);
+            if (t.phase == UnityEngine.TouchPhase.Began)
+                AddUniquePress(t.position);
         }
 #endif
+    }
+
+    // Both input backends can report the same physical press when Active Input Handling is Both.
+    private static void AddUniquePress(Vector2 position)
+    {
+        const float duplicateDistanceSqr = 0.01f;
+        for (int i = 0; i < Presses.Count; i++)
+        {
+            if ((Presses[i] - position).sqrMagnitude <= duplicateDistanceSqr)
+                return;
+        }
+        Presses.Add(position);
     }
 }
 
@@ -222,6 +245,26 @@ public class DirectButton
 /// </summary>
 public static class KeyInput
 {
+    private static int _typingFrame = -1;
+    private static bool _typing;
+
+#if ENABLE_INPUT_SYSTEM
+    // Mapping KeyCode to the Input System enum involves string work; cache the result per key.
+    private static readonly Dictionary<KeyCode, Key> MappedKeys = new Dictionary<KeyCode, Key>(64);
+    private static readonly HashSet<KeyCode> UnmappedKeys = new HashSet<KeyCode>();
+#endif
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        _typingFrame = -1;
+        _typing = false;
+#if ENABLE_INPUT_SYSTEM
+        MappedKeys.Clear();
+        UnmappedKeys.Clear();
+#endif
+    }
+
     /// <summary>True on the frame the key went down.</summary>
     public static bool WasPressed(KeyCode key)
     {
@@ -242,6 +285,12 @@ public static class KeyInput
     /// <summary>True while the player has a text input field selected and focused.</summary>
     public static bool IsTyping()
     {
+        // UI focus does not normally change between input reads in one frame; avoid repeating
+        // EventSystem lookups for every keyboard-controlled button and player.
+        if (_typingFrame == Time.frameCount) return _typing;
+        _typingFrame = Time.frameCount;
+        _typing = false;
+
         EventSystem es = EventSystem.current;
         if (es == null) return false;
 
@@ -249,18 +298,63 @@ public static class KeyInput
         if (selected == null) return false;
 
         TMP_InputField tmp = selected.GetComponent<TMP_InputField>();
-        if (tmp != null && tmp.isFocused) return true;
+        if (tmp != null && tmp.isFocused)
+        {
+            _typing = true;
+            return true;
+        }
 
         InputField legacy = selected.GetComponent<InputField>();
-        return legacy != null && legacy.isFocused;
+        _typing = legacy != null && legacy.isFocused;
+        return _typing;
+    }
+
+    /// <summary>True while the key is down, using the enabled input backends.</summary>
+    public static bool IsHeld(KeyCode key)
+    {
+        if (key == KeyCode.None) return false;
+
+#if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+        Key mapped;
+        if (keyboard != null && TryMap(key, out mapped) && keyboard[mapped].isPressed)
+            return true;
+#endif
+#if ENABLE_LEGACY_INPUT_MANAGER
+        if (Input.GetKey(key)) return true;
+#endif
+        return false;
+    }
+
+    /// <summary>True on the frame the key was released, using the enabled input backends.</summary>
+    public static bool WasReleased(KeyCode key)
+    {
+        if (key == KeyCode.None) return false;
+
+#if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+        Key mapped;
+        if (keyboard != null && TryMap(key, out mapped) && keyboard[mapped].wasReleasedThisFrame)
+            return true;
+#endif
+#if ENABLE_LEGACY_INPUT_MANAGER
+        if (Input.GetKeyUp(key)) return true;
+#endif
+        return false;
     }
 
 #if ENABLE_INPUT_SYSTEM
     // KeyCode and the new Input System's Key enum mostly share names; these are the ones that differ.
     private static bool TryMap(KeyCode code, out Key key)
     {
-        string name = code.ToString();
+        if (MappedKeys.TryGetValue(code, out key)) return true;
+        if (UnmappedKeys.Contains(code))
+        {
+            key = default(Key);
+            return false;
+        }
 
+        string name = code.ToString();
         if (name.StartsWith("Alpha")) name = "Digit" + name.Substring(5);
         else if (name.StartsWith("Keypad")) name = "Numpad" + name.Substring(6);
         else
@@ -273,7 +367,16 @@ public static class KeyInput
                 case "BackQuote": name = "Backquote"; break;
             }
         }
-        return System.Enum.TryParse(name, out key);
+
+        if (System.Enum.TryParse(name, out key))
+        {
+            MappedKeys[code] = key;
+            return true;
+        }
+
+        UnmappedKeys.Add(code);
+        key = default(Key);
+        return false;
     }
 #endif
 }

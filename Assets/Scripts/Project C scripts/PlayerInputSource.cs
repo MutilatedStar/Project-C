@@ -167,9 +167,6 @@ public class PlayerInputSource : MonoBehaviour
     private ControlScheme _builtScheme;
     private int _builtPlayer = -1;
 
-    private int _typingFrame = -1;
-    private bool _typing;
-
     private void Awake()
     {
 #if !ENABLE_INPUT_SYSTEM
@@ -214,19 +211,8 @@ public class PlayerInputSource : MonoBehaviour
     // Player 2 only exists while two-player mode is on.
     private bool Active { get { return !Locked && (playerNumber == 1 || LocalCoop.Enabled); } }
 
-    // Typing in a chat / name field must not move the character.
-    private bool Typing
-    {
-        get
-        {
-            if (_typingFrame != Time.frameCount)
-            {
-                _typingFrame = Time.frameCount;
-                _typing = KeyInput.IsTyping();
-            }
-            return _typing;
-        }
-    }
+    // KeyInput caches this shared EventSystem check once per frame for all players and UI controls.
+    private bool Typing { get { return KeyInput.IsTyping(); } }
 
     private bool KeyboardOn { get { return useKeyboard && playerNumber <= 2 && Active && !Typing; } }
 
