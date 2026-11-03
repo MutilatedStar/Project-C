@@ -6,13 +6,13 @@ using Cainos.PixelArtTopDown_Basic;
 // NOTE: no "using System;" on purpose. It makes "Random" ambiguous with UnityEngine.Random (same reason as FoeController).
 
 /// <summary>
-/// Put this on the PLAYER (the same object as TopDownCharacterController and PlayerInputSource). Needs the updated
+/// Put this on the PLAYER (the same object as TopDownCharacterController; the PlayerInputHub in the scene supplies the input). Needs the updated
 /// FoeController and SwordFireTrail.cs in the project too.
 ///
 /// TWO PLAYERS: every player has their own SwordController, their own sword collection, their own sword upgrades and
-/// their own timed power-ups. It reads its buttons from the PlayerInputSource on the same object, so Player 1 uses the
+/// their own timed power-ups. It reads its buttons from this character's player slot in the PlayerInputHub, so Player 1 uses the
 /// left half of the keyboard / Controller 1 and Player 2 the right half / Controller 2 (change the keys in
-/// PlayerInputSource's Keys, not here; defaults: swing F / Right Ctrl, previous / next Q, R / Comma, Period):
+/// the PlayerInputHub, not here; defaults: swing F / Right Ctrl, previous / next Q, R / Comma, Period):
 ///   Attack (tap)       swing the current sword the way the player is facing. The blade always chops DOWNWARD on screen.
 ///   Attack (keep held) the swing happens straight away, then a charge starts. When the player GLOWS the spin is ready:
 ///                      let go for a full 360-degree spin that hits every foe around you.
@@ -48,7 +48,6 @@ using Cainos.PixelArtTopDown_Basic;
 /// sword's hit range follows the size you see (the yellow circle on the player shows it in the Scene view).
 /// </summary>
 [DisallowMultipleComponent]
-[RequireComponent(typeof(PlayerInputSource))]
 public class SwordController : MonoBehaviour
 {
     // ------------------------------------------------------------ one sword's numbers
@@ -438,14 +437,8 @@ public class SwordController : MonoBehaviour
 
     private void Awake()
     {
-        input = GetComponent<PlayerInputSource>();
-        if (input == null)
-        {
-            // Prefabs made before this script needed one: add it so the player can still attack.
-            input = gameObject.AddComponent<PlayerInputSource>();
-            Debug.LogWarning("SwordController on '" + name + "': there was no PlayerInputSource, so one was added as Player 1. " +
-                             "For Player 2, add it yourself and set Player Number to 2.", this);
-        }
+        // The PlayerInputHub in the scene gives this character its player slot; no input component is needed on the prefab.
+        input = PlayerInputSource.For(gameObject);
 
         animator = GetComponent<Animator>();
         playerSprite = GetComponent<SpriteRenderer>();

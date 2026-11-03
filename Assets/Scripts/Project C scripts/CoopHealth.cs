@@ -21,9 +21,9 @@ namespace Ilumisoft.HealthSystem
     ///   CoopHealth.AllCountedDead      true once every player that counts is dead
     ///   CoopHealth.TeamWiped           event raised when the last player that counts dies (use it for the Failure Ending)
     ///
-    /// Needs a PlayerInputSource on the same object (it reads the Player Number from it) and CoopRules.cs.
+    /// Reads the Player Number from this character's PlayerInputSource, which the PlayerInputHub in the scene attaches (no input
+    /// component is needed on the prefab). Needs CoopRules.cs.
     /// </summary>
-    [RequireComponent(typeof(PlayerInputSource))]
     [AddComponentMenu("Health System/Coop Health")]
     public class CoopHealth : Health
     {
@@ -45,7 +45,7 @@ namespace Ilumisoft.HealthSystem
         {
             get
             {
-                if (_input == null) _input = GetComponent<PlayerInputSource>();
+                if (_input == null) _input = PlayerInputSource.For(gameObject);
                 return _input != null ? _input.playerNumber : 1;
             }
         }

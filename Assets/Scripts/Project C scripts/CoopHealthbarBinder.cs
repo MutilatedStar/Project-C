@@ -107,8 +107,9 @@ public class CoopHealthbarBinder : CoopHudPanel
         if (player == null)
         {
             Debug.LogWarning("CoopHealthbarBinder (Player " + playerNumber + "): no CoopHealth with Player Number " + playerNumber +
-                             " is in the game. Check that the player prefab has CoopHealth (not the plain Health component) and that its " +
-                             "PlayerInputSource says Player Number " + playerNumber + (playerNumber > 1 ? ", and that Player 2 is switched on (LocalCoopManager)." : "."), this);
+                             " is in the game. Check that the player prefab has CoopHealth (not the plain Health component), that the PlayerInputHub " +
+                             "gave a character Player " + playerNumber + "'s slot (the console says which character got which slot)" +
+                             (playerNumber > 1 ? ", and that Player 2 is switched on (LocalCoopManager)." : "."), this);
         }
     }
 }

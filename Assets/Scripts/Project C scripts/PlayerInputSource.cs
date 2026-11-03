@@ -149,10 +149,12 @@ public class KeyBindings
 }
 
 /// <summary>
-/// THE CONTROLLER CONVERTER. Put one on every player (Player 1 prefab: Player Number 1, Player 2 prefab: Player Number 2).
+/// THE CONTROLLER CONVERTER, one per character. You normally do NOT add it yourself: ONE PlayerInputHub in the scene owns every
+/// player's keys, controller and buttons, and the character scripts (TopDown, Platformer, Sword, CoopHealth) ask for their
+/// source with PlayerInputSource.For(gameObject), which makes the hub attach one and bind it to the right player.
 /// It turns "this player's keyboard keys + this player's controller" into plain actions that any script can ask for:
 ///
-///     PlayerInputSource input = GetComponent&lt;PlayerInputSource&gt;();
+///     PlayerInputSource input = PlayerInputSource.For(gameObject);
 ///     Vector2 move = input.Move;            if (input.JumpPressed) ...      if (input.InteractPressed) ...
 ///
 /// TopDownCharacterController, PlatformerCharacterController and SwordController read ONLY this, so keys and
@@ -181,16 +183,16 @@ public class KeyBindings
 /// Needs the Input System package with Project Settings > Player > Active Input Handling = "Both".
 /// Xbox, PS4, PS5 and Switch Pro pads are recognised as gamepads.
 ///
-/// PREFABS. Put this on the character prefab (any object of it) and leave Player Number at 1 on the prefab. Then either:
-///   - drop two instances in the scene and set Player Number on each INSTANCE (2 on the second), or
-///   - spawn from code and bind the instance to a player:
-///         GameObject c = Instantiate(characterPrefab);
-///         PlayerInputSource.Bind(c, 2);                 // or Bind(c, 2, ControllerSlot.Controller2)
-///     Bind finds (or adds) the PlayerInputSource on that character and calls SetPlayer, which also refreshes the UI and
-///     re-checks for two players sharing a number. Changing Player Number by hand at runtime works too, but SetPlayer is tidier.
-///   Edit keys on the PREFAB, not on every instance: in the editor an instance no longer copies the default keys into itself
-///   (that used to turn every key into a per-instance override that ignored later prefab edits).
-///   Player 2 and up only answer while LocalCoop.Enabled is on, so switch it on when you spawn a second player.
+/// THE HUB (PlayerInputHub). With a hub in the scene, nothing is set on the characters: the hub's Player 1 / Player 2 / ... slots
+/// hold the prefab (or scene object) of each character plus that player's keys, controller and buttons. When a character wakes
+/// up, the hub gives it the first matching slot (pinned scene object, then same prefab name, then first free slot) and copies
+/// the slot's settings into this component, overwriting whatever was saved on it. A component already on an older prefab is
+/// simply taken over, so you can delete it from the prefabs whenever you like. Without a hub, this component works on its own:
+/// set Player Number and the keys on the prefab (or on each scene instance).
+///
+/// Two-player rule: Player 2 and up answer as soon as a second player is actually in the game (a second PlayerInputSource is
+/// active) OR LocalCoop.Enabled is on. Before this, a Player 2 in the scene was ignored whenever the LocalCoop switch was off,
+/// and Player 1 then answered to BOTH halves of the keyboard.
 ///
 /// UI: ControlsListPanel shows these exact keys and buttons, and hides / shows them with the Keyboard / Controller
 /// toggle (SetKeyboardEnabled / SetControllerEnabled). Needs DirectButton.cs (KeyInput) and LocalCoopManager.cs.
@@ -206,7 +208,7 @@ public class PlayerInputSource : MonoBehaviour
 
     [Header("Who is this player?")]
     [Tooltip("1 = Player 1 (left side of the keyboard, Controller 1). 2 = Player 2 (right side, Controller 2). 3 and 4 are controller-only until you give them keys.")]
-    [Range(1, 4)] public int playerNumber = 1;
+    [Range(1, 4)] public int playerNumber = 1;   // with a PlayerInputHub in the scene the hub sets this (and every setting below) at runtime
     [Tooltip("TopDown or Platformer. Only changes what the controls list shows (Jump is listed for Platformer); the keys below are what counts.")]
     public ControlScheme scheme = ControlScheme.TopDown;
 
@@ -244,7 +246,13 @@ public class PlayerInputSource : MonoBehaviour
     public bool Locked { get; set; }
 
     /// <summary>True for Player 1 while Player 2 is switched off: Player 1 owns the whole keyboard.</summary>
-    public bool SoloKeyboard { get { return playerNumber == 1 && !LocalCoop.Enabled; } }
+    public bool SoloKeyboard { get { return playerNumber == 1 && !TwoPlayers; } }
+
+    /// <summary>
+    /// True when more than one player is really in the game (two active PlayerInputSources) or the LocalCoop switch is on. It decides
+    /// whether Player 1 owns the whole keyboard and whether players 2-4 answer, so a Player 2 that exists always works.
+    /// </summary>
+    public static bool TwoPlayers { get { return LocalCoop.Enabled || Instances.Count > 1; } }
 
     /// <summary>Raised when this player's devices or keys change (the UI listens to it).</summary>
     public event Action Changed;
@@ -262,12 +270,91 @@ public class PlayerInputSource : MonoBehaviour
         return null;
     }
 
+    /// <summary>The PlayerInputHub that owns this player's keys, devices and buttons, or null for a stand-alone component.</summary>
+    public PlayerInputHub Hub { get; private set; }
+
+    /// <summary>
+    /// THE ENTRY POINT for character scripts: this character's input source. With a PlayerInputHub in the scene the hub attaches
+    /// (or takes over) the component and binds it to a player slot; without one, an existing component is used as it is, and a missing one
+    /// is added as the lowest free player number, with a warning. Cheap to call again: it returns the same component.
+    /// </summary>
+    public static PlayerInputSource For(GameObject character)
+    {
+        PlayerInputHub hub = PlayerInputHub.Instance;
+        if (hub != null) return hub.Attach(character);
+
+        PlayerInputSource source = character.GetComponent<PlayerInputSource>();
+        if (source != null) return source;
+
+        source = character.AddComponent<PlayerInputSource>();
+        int number = 1;
+        while (number < MaxPlayers && NumberTakenByAnother(number, source)) number++;   // two hub-less characters must not both be Player 1
+        source.SetPlayer(number);
+        Debug.LogWarning("PlayerInputSource: there is no PlayerInputHub in the scene and '" + character.name + "' had no PlayerInputSource, " +
+                         "so one was added as Player " + source.playerNumber + " with the default keys. Add a PlayerInputHub to the scene " +
+                         "to set every player's keys and controllers in one place.", character);
+        return source;
+    }
+
+    private static bool NumberTakenByAnother(int number, PlayerInputSource self)
+    {
+        for (int i = 0; i < Instances.Count; i++)
+        {
+            if (Instances[i] != self && Instances[i].playerNumber == number) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Called by the hub: this component now belongs to that hub's player slot and takes its settings from it.</summary>
+    public void BindToHub(PlayerInputHub owner, int number)
+    {
+        Hub = owner;
+        playerNumber = Mathf.Clamp(number, 1, MaxPlayers);
+        owner.CopySettingsTo(this);
+        _tablesDirty = true;
+#if ENABLE_INPUT_SYSTEM
+        _padFrame = -1;   // the pad resolved earlier this frame belonged to the old settings
+#endif
+        if (isActiveAndEnabled)
+        {
+            if (_started) CheckForClashes();
+            if (RosterChanged != null) RosterChanged();
+        }
+        RaiseChanged();
+    }
+
+    /// <summary>Called by the hub: use these key sets (shared with the hub, not copied) and don't fill in defaults over them.</summary>
+    public void AdoptKeys(KeyBindings[] byPlayer, KeyBindings solo)
+    {
+        keysByPlayer = byPlayer;
+        soloExtraKeys = solo;
+        bindingsVersion = BindingsVersion;
+        _tablesDirty = true;
+    }
+
+    /// <summary>Pick this player's controller. With a hub the choice is kept in the player's slot, so a respawn keeps it.</summary>
+    public void SetController(ControllerSlot slot)
+    {
+        controller = slot;
+#if ENABLE_INPUT_SYSTEM
+        _padFrame = -1;
+#endif
+        if (Hub != null) Hub.RememberController(playerNumber, slot);
+        RaiseChanged();
+    }
+
     /// <summary>
     /// For prefabs and spawners: gives this character (an instantiated prefab or a scene object) to a player. Finds the
     /// PlayerInputSource on it or on a child, adds one if there is none, then calls SetPlayer. Keeps the controller choice.
     /// </summary>
     public static PlayerInputSource Bind(GameObject character, int playerNumber)
     {
+        if (character == null) return null;
+
+        // With a hub the player's slot decides everything; Bind just says which slot this character takes.
+        PlayerInputHub hub = PlayerInputHub.Instance;
+        if (hub != null) return hub.Claim(character, playerNumber);
+
         PlayerInputSource source = FindOrAdd(character);
         if (source != null) source.SetPlayer(playerNumber);
         return source;
@@ -276,8 +363,8 @@ public class PlayerInputSource : MonoBehaviour
     /// <summary>Same as Bind, and also picks the controller (Auto = Player N uses Controller N).</summary>
     public static PlayerInputSource Bind(GameObject character, int playerNumber, ControllerSlot slot)
     {
-        PlayerInputSource source = FindOrAdd(character);
-        if (source != null) source.SetPlayer(playerNumber, slot);
+        PlayerInputSource source = Bind(character, playerNumber);
+        if (source != null) source.SetController(slot);
         return source;
     }
 
@@ -296,6 +383,12 @@ public class PlayerInputSource : MonoBehaviour
     /// </summary>
     public void SetPlayer(int number)
     {
+        if (Hub != null)
+        {
+            Hub.Claim(gameObject, number);   // the hub moves this character to that slot and copies the slot's settings in
+            return;
+        }
+
         playerNumber = Mathf.Clamp(number, 1, MaxPlayers);
         EnsureBindings();
         _tablesDirty = true;
@@ -313,8 +406,8 @@ public class PlayerInputSource : MonoBehaviour
     /// <summary>SetPlayer, and also pick the controller.</summary>
     public void SetPlayer(int number, ControllerSlot slot)
     {
-        controller = slot;
         SetPlayer(number);
+        SetController(slot);
     }
 
     // ------------------------------------------------------------------ device switches (wire the toggles to these)
@@ -326,6 +419,7 @@ public class PlayerInputSource : MonoBehaviour
     {
         if (useKeyboard == on) return;
         useKeyboard = on;
+        if (Hub != null) Hub.RememberDevice(playerNumber, true, on);   // a respawned character keeps the choice
         RaiseChanged();
     }
 
@@ -333,6 +427,7 @@ public class PlayerInputSource : MonoBehaviour
     {
         if (useController == on) return;
         useController = on;
+        if (Hub != null) Hub.RememberDevice(playerNumber, false, on);
         RaiseChanged();
     }
 
@@ -442,7 +537,7 @@ public class PlayerInputSource : MonoBehaviour
     {
         EnsureBindings();
         KeyCode[] own = keysByPlayer[Mathf.Clamp(player, 1, MaxPlayers) - 1].Get(action) ?? new KeyCode[0];
-        if (player != 1 || LocalCoop.Enabled) return own;
+        if (player != 1 || TwoPlayers) return own;
 
         KeyCode[] extra = soloExtraKeys.Get(action);
         if (extra == null || extra.Length == 0) return own;
@@ -517,18 +612,16 @@ public class PlayerInputSource : MonoBehaviour
         if (playerNumber > 1) StartCoroutine(WarnIfCoopOff());
     }
 
-    // Player 2 and up are ignored while two-player mode is off, and Player 1 then answers to the WHOLE keyboard. From the outside
-    // that looks exactly like "both keyboards move one character", so say so once. It waits a second because the co-op manager
-    // may switch two-player mode on in its own Start.
+    // Player 2's keys and controller work as soon as the character exists, but the camera split, HUD and rules follow the LocalCoop
+    // switch. If it is still off a second after the start, say so once. It waits because the co-op manager may switch it on in its Start.
     private System.Collections.IEnumerator WarnIfCoopOff()
     {
         yield return new WaitForSecondsRealtime(1f);
         if (!isActiveAndEnabled || playerNumber == 1 || LocalCoop.Enabled) yield break;
 
-        Debug.LogWarning("PlayerInputSource: \"" + name + "\" is Player " + playerNumber + ", but two-player mode is OFF " +
-                         "(LocalCoop.Enabled is false). While it is off, this player ignores all input and Player 1 answers to " +
-                         "BOTH halves of the keyboard, so one character gets every key. Switch two-player mode on " +
-                         "(LocalCoopManager), or deactivate this player.", this);
+        Debug.LogWarning("PlayerInputSource: \"" + name + "\" is Player " + playerNumber + " and its keys and controller work, but " +
+                         "two-player mode (LocalCoop.Enabled) is OFF, so the split-screen camera, the HUD and the co-op rules still treat " +
+                         "the game as one player. Switch it on with LocalCoopManager.", this);
     }
 
     // The classic co-op mistake: two players with the same number, or two players sharing a key.
@@ -647,8 +740,8 @@ public class PlayerInputSource : MonoBehaviour
 
     // ------------------------------------------------------------------ gating
 
-    // Player 2 (and up) only exist while two-player mode is on.
-    private bool Active { get { return !Locked && (playerNumber == 1 || LocalCoop.Enabled); } }
+    // Player 2 (and up) answer once a second player is really in the game (see TwoPlayers).
+    private bool Active { get { return !Locked && (playerNumber == 1 || TwoPlayers); } }
 
     // KeyInput caches this shared EventSystem check once per frame for all players and UI controls.
     private bool Typing { get { return KeyInput.IsTyping(); } }
@@ -672,7 +765,7 @@ public class PlayerInputSource : MonoBehaviour
         get
         {
             if (_tablesDirty || _tableCoop == null || _tablesFor != playerNumber) RebuildTables();
-            return LocalCoop.Enabled ? _tableCoop : _tableSolo;
+            return TwoPlayers ? _tableCoop : _tableSolo;
         }
     }
 
@@ -697,7 +790,7 @@ public class PlayerInputSource : MonoBehaviour
         return t;
     }
 
-    private static KeyCode[] Merge(KeyCode[] a, KeyCode[] b)
+    internal static KeyCode[] Merge(KeyCode[] a, KeyCode[] b)
     {
         List<KeyCode> list = new List<KeyCode>(a);
         for (int j = 0; j < b.Length; j++) if (!list.Contains(b[j])) list.Add(b[j]);
@@ -764,7 +857,7 @@ public class PlayerInputSource : MonoBehaviour
     private bool Released(PlayerAction action)
     {
         // Let-go still counts if the player got locked in the same frame, so a jump can't get stuck "held".
-        if (playerNumber != 1 && !LocalCoop.Enabled) return false;
+        if (playerNumber != 1 && !TwoPlayers) return false;
         if (useKeyboard && KeysReleased(Table[(int)action])) return true;
 #if ENABLE_INPUT_SYSTEM
         ButtonControl control = ControllerSlots.Control(Pad, PadButtonFor(action));
@@ -801,7 +894,7 @@ public class PlayerInputSource : MonoBehaviour
     private Gamepad ResolvePad()
     {
         if (!useController || playerNumber > 4) return null;
-        if (playerNumber > 1 && !LocalCoop.Enabled) return null;
+        if (playerNumber > 1 && !TwoPlayers) return null;
 
         int slot;
         switch (controller)
@@ -814,7 +907,7 @@ public class PlayerInputSource : MonoBehaviour
         Gamepad pad = ControllerSlots.Get(slot);
 
         // One-player mode: Player 1 may use ANY connected controller, even if it isn't "Controller 1".
-        if (pad == null && controller == ControllerSlot.Auto && playerNumber == 1 && !LocalCoop.Enabled)
+        if (pad == null && controller == ControllerSlot.Auto && playerNumber == 1 && !TwoPlayers)
             pad = ControllerSlots.FirstConnected();
 
         return pad;

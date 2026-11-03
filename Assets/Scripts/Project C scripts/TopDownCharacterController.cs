@@ -5,25 +5,21 @@ using UnityEngine;
 namespace Cainos.PixelArtTopDown_Basic
 {
     /// <summary>
-    /// Top-down character. Reads ALL of its input from the PlayerInputSource on the same object, so the same
-    /// script drives Player 1 (keyboard left half + Controller 1) and Player 2 (arrow keys + Controller 2): just
-    /// set Player Number on that component. Needs PlayerInputSource.cs, DirectButton.cs and LocalCoopManager.cs.
+    /// Top-down character. Reads ALL of its input through PlayerInputSource.For(gameObject): the PlayerInputHub in the scene
+    /// gives this character its player slot, so the same script and the same prefab drive Player 1 (keyboard left half +
+    /// Controller 1) and Player 2 (arrow keys + Controller 2) and nothing is set on the character. Needs PlayerInputHub.cs,
+    /// PlayerInputSource.cs, DirectButton.cs and LocalCoopManager.cs.
     ///
-    /// Keys and buttons are Inspector fields on that PlayerInputSource, one set per player, so changing Player 2's keys
-    /// never touches Player 1's. PlatformerCharacterController reads the same component the same way.
+    /// Keys and buttons are set per player in the hub, so changing Player 2's keys never touches Player 1's.
+    /// PlatformerCharacterController gets its input the same way.
     ///
     /// It no longer listens for Tab / Esc / P itself. Pausing belongs to PauseManager (list this script in its
     /// "Player Input Scripts" so the player holds still), and a menu or inventory that should freeze just this
-    /// player can set  GetComponent&lt;PlayerInputSource&gt;().Locked = true.
-    ///
-    /// PREFABS: this script finds its Rigidbody2D, Animator and PlayerInputSource on its own object, a parent or a child, so it
-    /// works when the Animator lives on a sprite child of the character prefab. Anything it can't find can be dragged into the
-    /// "References" fields. To give a spawned character to a player, call AssignPlayer(2) on it (or PlayerInputSource.Bind).
+    /// player can set  PlayerInputSource.For(gameObject).Locked = true.
     /// </summary>
-    [RequireComponent(typeof(PlayerInputSource))]
     public class TopDownCharacterController : MonoBehaviour
     {
-        public float speed = 3f;
+        public float speed;
         public float sprintMultiplier = 1.5f;
         [Tooltip("ON: tap the run key to switch running on/off (as before). OFF: run only while the key / button is held.")]
         public bool sprintToggle = true;
@@ -49,15 +45,10 @@ namespace Cainos.PixelArtTopDown_Basic
         [Range(0f, 0.2f)]
         [SerializeField] private float stepTimingVariation = 0.05f;
 
-        [Header("References (optional: found automatically when left empty)")]
-        [Tooltip("Empty = the Animator on this object, or the first one on a child (typical when the sprite is a child of the character prefab).")]
-        [SerializeField] private Animator animator;
-        [Tooltip("Empty = the Rigidbody2D on this object or a parent.")]
-        [SerializeField] private Rigidbody2D rb;
-        [Tooltip("Empty = the PlayerInputSource on this object, a parent or a child.")]
-        [SerializeField] private PlayerInputSource input;
+        private Animator animator;
+        private Rigidbody2D rb;
+        private PlayerInputSource input;
 
-        private bool referencesResolved;
         private bool isSprinting;
 
         // Footstep state
@@ -69,15 +60,11 @@ namespace Cainos.PixelArtTopDown_Basic
         // Awake, not Start: every reference is ready before PauseManager or another script can switch this one off.
         private void Awake()
         {
-            ResolveReferences();
-            if (rb == null)
-            {
-                // Without a body there is nothing to move: say so once, instead of an error on every frame.
-                Debug.LogError("TopDownCharacterController on '" + name + "': no Rigidbody2D on this object or a parent. " +
-                               "Add one to the character prefab (or drag it into References), so this script has something to move.", this);
-                enabled = false;
-                return;
-            }
+            animator = GetComponent<Animator>();
+            rb = GetComponent<Rigidbody2D>();
+            // The PlayerInputHub in the scene gives this character its player slot (keys, controller). The character itself needs
+            // no input component: one is attached here, or taken over if an older prefab still has one.
+            input = PlayerInputSource.For(gameObject);
 
             if (footstepSource != null)
             {
@@ -86,66 +73,11 @@ namespace Cainos.PixelArtTopDown_Basic
             }
         }
 
-        // Fills every reference that was not dragged in, looking on this object, its parents and its children. Runs from Awake,
-        // and from AssignPlayer for a prefab that was instantiated inactive (its Awake has not run yet).
-        private void ResolveReferences()
-        {
-            if (referencesResolved) return;
-            referencesResolved = true;
-
-            if (animator == null) animator = GetComponentInChildren<Animator>(true);   // includes this object first
-            if (rb == null) rb = GetComponentInParent<Rigidbody2D>();                  // includes this object first
-
-            if (input == null) input = GetComponentInParent<PlayerInputSource>();
-            if (input == null) input = GetComponentInChildren<PlayerInputSource>(true);
-            if (input == null)
-            {
-                // RequireComponent only adds it to NEW components: a prefab made before this script needed one still lacks it.
-                input = gameObject.AddComponent<PlayerInputSource>();
-                Debug.LogWarning("TopDownCharacterController on '" + name + "': there was no PlayerInputSource, so one was added " +
-                                 "as Player 1. For Player 2, call AssignPlayer(2) or set Player Number to 2 on it.", this);
-            }
-
-            if (animator == null)
-            {
-                Debug.LogWarning("TopDownCharacterController on '" + name + "': no Animator found on this object or its children. " +
-                                 "The character will still move, but it will not play walk animations.", this);
-            }
-        }
-
-        /// <summary>
-        /// For a spawner or a character-select screen: makes this character Player 1, 2, 3 or 4.
-        /// Instantiate(prefab).GetComponent&lt;TopDownCharacterController&gt;().AssignPlayer(2);
-        /// </summary>
-        public void AssignPlayer(int playerNumber)
-        {
-            ResolveReferences();
-            if (input != null) input.SetPlayer(playerNumber);
-        }
-
-        /// <summary>Same, and also picks the controller (Auto = Player N uses Controller N).</summary>
-        public void AssignPlayer(int playerNumber, ControllerSlot slot)
-        {
-            ResolveReferences();
-            if (input != null) input.SetPlayer(playerNumber, slot);
-        }
-
-        // The Animator is optional, so every animation call goes through these.
-        private void SetMoving(bool moving)
-        {
-            if (animator != null && animator.isActiveAndEnabled) animator.SetBool("IsMoving", moving);
-        }
-
-        private void SetDirection(int direction)
-        {
-            if (animator != null && animator.isActiveAndEnabled) animator.SetInteger("Direction", direction);
-        }
-
         // Switched off by PauseManager / a menu while walking: stand still instead of sliding on.
         private void OnDisable()
         {
             if (rb != null && gameObject.activeInHierarchy) rb.linearVelocity = Vector2.zero;
-            SetMoving(false);
+            if (animator != null && animator.isActiveAndEnabled) animator.SetBool("IsMoving", false);
             wasStepping = false;
         }
 
@@ -155,7 +87,7 @@ namespace Cainos.PixelArtTopDown_Basic
             if (FloorController.BlocksInput || input.Locked)
             {
                 rb.linearVelocity = Vector2.zero;
-                SetMoving(false);
+                animator.SetBool("IsMoving", false);
                 wasStepping = false;
                 return;
             }
@@ -168,8 +100,8 @@ namespace Cainos.PixelArtTopDown_Basic
             Vector2 dir = analogMovement ? move : move.normalized;
 
             // Facing only changes while moving, so the player keeps looking the way they last walked.
-            if (moving) SetDirection(DirectionOf(move));
-            SetMoving(moving);
+            if (moving) animator.SetInteger("Direction", DirectionOf(move));
+            animator.SetBool("IsMoving", moving);
 
             float currentSpeed = isSprinting ? speed * sprintMultiplier : speed;
 

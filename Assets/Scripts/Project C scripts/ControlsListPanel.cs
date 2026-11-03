@@ -9,23 +9,19 @@ using UnityEngine.UI;
 ///   toggle OFF  ->  the list is hidden, and that player ignores that device
 ///   toggle ON   ->  the list is shown, filled in from the player's REAL bindings
 ///
-/// Nothing in the list is typed in by hand. Every line is read from the same PlayerInputSource the game reads its input
-/// from (the keys it really answers to right now, the pad buttons it really uses), and it redraws when the keys, the
-/// devices, the roster or the one-player / two-player switch change. Pause is read from PauseManager.
+/// Nothing in the list is typed in by hand. With a PlayerInputHub in the scene, every line is read from that player's slot in the
+/// hub: the same keys and buttons the game reads its input from, so it also works for a Player 2 who has not been spawned yet.
+/// It redraws when a slot, the roster of players or the one-player / two-player situation changes. Pause is read from PauseManager.
 ///
 /// SET UP, once per toggle (so four lists for two players: P1 Keyboard, P1 Controller, P2 Keyboard, P2 Controller):
 ///   1. Under the toggle, make an empty object (the List Root) and give it a TextMeshPro text (Text). Put the toggle OUTSIDE
 ///      the List Root, otherwise hiding the list would hide the toggle.
 ///   2. Add this script anywhere (the List Root's parent is a good home). Set Player Number and Device.
 ///   3. Drag the toggle into Toggle, the text into Text, and the empty object into List Root.
-///   4. Player 2 is usually spawned from a prefab, so the scene can't point at it yet: drag the Player 2 PREFAB's
-///      PlayerInputSource into Prefab Source. The list then shows the keys the prefab will have, and switches to the live
-///      player once it exists. If both players are the SAME prefab, point both panels at it: each panel reads the keys of
-///      ITS OWN Player Number from that one component.
+///   (Without a PlayerInputHub in the scene, drag the Player 2 PREFAB's PlayerInputSource into Prefab Source instead.)
 ///
-/// The toggle drives the player's device switch (PlayerInputSource.SetKeyboardEnabled / SetControllerEnabled), so
-/// you don't wire the toggle's OnValueChanged yourself. Until the person touches the toggle it follows the player's
-/// own setting instead, so a prefab that starts with the controller off shows an unticked box.
+/// The toggle drives the player's device switch, so you don't wire the toggle's OnValueChanged yourself. The switch is kept in
+/// the hub's slot, so it survives the character being respawned.
 ///
 /// The columns use TextMeshPro's position tag. Players 3 and 4 work the same way; the camera and the HUD layouts
 /// only place two views.
@@ -38,7 +34,7 @@ public class ControlsListPanel : MonoBehaviour
     [Header("Whose controls")]
     [Range(1, 4)] public int playerNumber = 1;
     public Device device = Device.Keyboard;
-    [Tooltip("Optional, for a player who isn't in the scene yet (Player 2 is spawned from a prefab): the PlayerInputSource on that PREFAB. Shown until the live player exists.")]
+    [Tooltip("Only needed when the scene has NO PlayerInputHub: the PlayerInputSource on the player's PREFAB, shown until the live player exists.")]
     public PlayerInputSource prefabSource;
 
     [Header("The toggle and the list")]
@@ -53,7 +49,8 @@ public class ControlsListPanel : MonoBehaviour
     [Tooltip("Where the second column (the keys) starts, as a percentage of the text width.")]
     [Range(20f, 80f)] public float keyColumnPercent = 45f;
 
-    private PlayerInputSource source;
+    private PlayerInputHub hub;          // the scene's hub, if it has one (the normal case)
+    private PlayerInputSource source;    // only used without a hub: the live player
     private bool userTouchedToggle;
     private readonly StringBuilder sb = new StringBuilder(256);
 
@@ -77,15 +74,24 @@ public class ControlsListPanel : MonoBehaviour
             return;
         }
 
+        hub = PlayerInputHub.Instance;
+        if (hub != null) hub.Changed += Redraw;
+        else if (prefabSource == null) Debug.LogWarning("ControlsListPanel on '" + name + "': there is no PlayerInputHub in the scene and no Prefab Source, " +
+                                                        "so the list can only show a player who is already in the game.", this);
+
         PlayerInputSource.RosterChanged += OnRosterChanged;
         LocalCoop.Changed += OnCoopChanged;
         if (toggle != null) toggle.onValueChanged.AddListener(OnToggleChanged);
 
-        Bind(PlayerInputSource.Get(playerNumber));
+        if (hub != null) SyncToggle();
+        else Bind(PlayerInputSource.Get(playerNumber));
+        Redraw();
     }
 
     private void OnDisable()
     {
+        if (hub != null) hub.Changed -= Redraw;
+        hub = null;
         PlayerInputSource.RosterChanged -= OnRosterChanged;
         LocalCoop.Changed -= OnCoopChanged;
         if (toggle != null) toggle.onValueChanged.RemoveListener(OnToggleChanged);
@@ -95,25 +101,28 @@ public class ControlsListPanel : MonoBehaviour
 
     // ------------------------------------------------------------------ events
 
-    // A player joined, left or respawned: follow the live one for this player number.
+    // A player joined, left or respawned. With a hub the list only needs a redraw (the slot did not change); without one, follow the live player.
     private void OnRosterChanged()
     {
+        if (hub != null) { Redraw(); return; }
+
         PlayerInputSource now = PlayerInputSource.Get(playerNumber);
         if (now != source) Bind(now);
     }
 
     private void OnCoopChanged(bool on)
     {
-        Redraw();   // Player 1's keys change while Player 2 is off, and Player 2's list may need to say "not in the game"
+        Redraw();   // Player 1's keys change while nobody else plays (the solo keys)
     }
 
     private void OnToggleChanged(bool on)
     {
         userTouchedToggle = true;
-        PushToggleToPlayer();
+        SetDevice(on);
         Redraw();
     }
 
+    // Without a hub: follow the live player, and let the person's toggle choice carry over to a respawned one.
     private void Bind(PlayerInputSource next)
     {
         if (source != null) source.Changed -= Redraw;
@@ -124,23 +133,74 @@ public class ControlsListPanel : MonoBehaviour
             source.Changed += Redraw;
             if (toggle != null)
             {
-                if (userTouchedToggle) PushToggleToPlayer();                 // a respawned player takes the person's choice
-                else toggle.SetIsOnWithoutNotify(DeviceOn(source));           // otherwise the toggle shows the player's own setting
+                if (userTouchedToggle) SetDevice(toggle.isOn);
+                else toggle.SetIsOnWithoutNotify(DeviceOn());
             }
         }
         Redraw();
     }
 
-    private void PushToggleToPlayer()
+    // With a hub the slot is the truth, so the toggle always shows what the slot says.
+    private void SyncToggle()
     {
-        if (source == null || toggle == null) return;
-        if (device == Device.Keyboard) source.SetKeyboardEnabled(toggle.isOn);
-        else source.SetControllerEnabled(toggle.isOn);
+        if (toggle != null && toggle.isOn != DeviceOn()) toggle.SetIsOnWithoutNotify(DeviceOn());
     }
 
-    private bool DeviceOn(PlayerInputSource s)
+    // ------------------------------------------------------------------ the player's real settings (hub slot, or the component without a hub)
+
+    private PlayerInputSource Legacy { get { return source != null ? source : prefabSource; } }
+
+    private bool HasConfig { get { return hub != null || Legacy != null; } }
+
+    private bool DeviceOn()
     {
-        return device == Device.Keyboard ? s.KeyboardEnabled : s.ControllerEnabled;
+        if (hub != null)
+        {
+            PlayerInputHub.PlayerSlot slot = hub.Slot(playerNumber);
+            return device == Device.Keyboard ? slot.useKeyboard : slot.useController;
+        }
+        PlayerInputSource s = Legacy;
+        return s != null && (device == Device.Keyboard ? s.KeyboardEnabled : s.ControllerEnabled);
+    }
+
+    private void SetDevice(bool on)
+    {
+        if (hub != null)
+        {
+            if (device == Device.Keyboard) hub.SetKeyboardEnabled(playerNumber, on);
+            else hub.SetControllerEnabled(playerNumber, on);
+        }
+        else if (source != null)
+        {
+            if (device == Device.Keyboard) source.SetKeyboardEnabled(on);
+            else source.SetControllerEnabled(on);
+        }
+    }
+
+    private KeyCode[] Keys(PlayerAction action)
+    {
+        return hub != null ? hub.KeysFor(playerNumber, action) : Legacy.KeysFor(playerNumber, action);
+    }
+
+    private PadButton Pad(PlayerAction action)
+    {
+        return hub != null ? hub.PadButtonFor(playerNumber, action) : Legacy.PadButtonFor(action);
+    }
+
+    private bool IsPlatformer
+    {
+        get { return (hub != null ? hub.scheme : Legacy.scheme) == ControlScheme.Platformer; }
+    }
+
+    private string ControllerName()
+    {
+        ControllerSlot slot = hub != null ? hub.Slot(playerNumber).controller : Legacy.controller;
+        switch (slot)
+        {
+            case ControllerSlot.None: return "None";
+            case ControllerSlot.Auto: return "Controller " + playerNumber;
+            default: return "Controller " + ((int)slot - (int)ControllerSlot.Controller1 + 1);
+        }
     }
 
     // ------------------------------------------------------------------ drawing (only when something changed, never per frame)
@@ -153,20 +213,21 @@ public class ControlsListPanel : MonoBehaviour
 
     private void Redraw()
     {
-        PlayerInputSource shown = source != null ? source : prefabSource;
+        if (hub != null) SyncToggle();
 
         bool on;
-        if (toggle != null) on = toggle.isOn;
-        else on = shown != null && DeviceOn(shown);
+        if (hub != null) on = DeviceOn();
+        else if (toggle != null) on = toggle.isOn;
+        else on = DeviceOn();
 
         GameObject root = ListObject();
         if (root != null && root.activeSelf != on) root.SetActive(on);
         if (!on) return;
 
-        text.text = Build(shown);
+        text.text = Build();
     }
 
-    private string Build(PlayerInputSource s)
+    private string Build()
     {
         sb.Length = 0;
         sb.Append("<b>");
@@ -174,40 +235,42 @@ public class ControlsListPanel : MonoBehaviour
         else sb.Append("Player ").Append(playerNumber).Append(device == Device.Keyboard ? " Keyboard" : " Controller");
         sb.Append("</b>");
 
-        if (s == null)
+        if (!HasConfig)
         {
             sb.Append("\nPlayer ").Append(playerNumber).Append(" is not in the game.");
             return sb.ToString();
         }
 
-        if (device == Device.Keyboard) BuildKeyboard(s);
-        else BuildController(s);
+        if (hub != null && !hub.IsInGame(playerNumber)) sb.Append("  <size=75%>(not in the game right now)</size>");
+
+        if (device == Device.Keyboard) BuildKeyboard();
+        else BuildController();
         return sb.ToString();
     }
 
-    private void BuildKeyboard(PlayerInputSource s)
+    private void BuildKeyboard()
     {
-        Row("Move", MoveKeys(s));
-        Row("Run", KeyList(s.KeysFor(playerNumber, PlayerAction.Sprint)));
-        if (s.scheme == ControlScheme.Platformer) Row("Jump", KeyList(s.KeysFor(playerNumber, PlayerAction.Jump)));
-        Row("Swing Sword", KeyList(s.KeysFor(playerNumber, PlayerAction.Attack)));
-        Row("Swap", KeyList(s.KeysFor(playerNumber, PlayerAction.Interact)));
-        Row("Previous / Next Sword", KeyList(s.KeysFor(playerNumber, PlayerAction.WeaponPrev)) + " / " + KeyList(s.KeysFor(playerNumber, PlayerAction.WeaponNext)));
+        Row("Move", MoveKeys());
+        Row("Run", KeyList(Keys(PlayerAction.Sprint)));
+        if (IsPlatformer) Row("Jump", KeyList(Keys(PlayerAction.Jump)));
+        Row("Swing Sword", KeyList(Keys(PlayerAction.Attack)));
+        Row("Swap", KeyList(Keys(PlayerAction.Interact)));
+        Row("Previous / Next Sword", KeyList(Keys(PlayerAction.WeaponPrev)) + " / " + KeyList(Keys(PlayerAction.WeaponNext)));
 
         // Pause belongs to PauseManager and works for any player; show what it really uses.
         PauseManager pause = PauseManager.Instance;
         if (pause != null && pause.pauseKeys != null && pause.pauseKeys.Length > 0) Row("Pause", KeyList(pause.pauseKeys));
     }
 
-    private void BuildController(PlayerInputSource s)
+    private void BuildController()
     {
-        Row("Controller", ControllerName(s));
+        Row("Controller", ControllerName());
         Row("Move", "Left Stick / D-Pad");
-        Row("Run", PadName(s.PadButtonFor(PlayerAction.Sprint)));
-        if (s.scheme == ControlScheme.Platformer) Row("Jump", PadName(s.PadButtonFor(PlayerAction.Jump)));
-        Row("Swing Sword", PadName(s.PadButtonFor(PlayerAction.Attack)));
-        Row("Swap", PadName(s.PadButtonFor(PlayerAction.Interact)));
-        Row("Previous / Next Sword", PadName(s.PadButtonFor(PlayerAction.WeaponPrev)) + " / " + PadName(s.PadButtonFor(PlayerAction.WeaponNext)));
+        Row("Run", PadName(Pad(PlayerAction.Sprint)));
+        if (IsPlatformer) Row("Jump", PadName(Pad(PlayerAction.Jump)));
+        Row("Swing Sword", PadName(Pad(PlayerAction.Attack)));
+        Row("Swap", PadName(Pad(PlayerAction.Interact)));
+        Row("Previous / Next Sword", PadName(Pad(PlayerAction.WeaponPrev)) + " / " + PadName(Pad(PlayerAction.WeaponNext)));
 
         PauseManager pause = PauseManager.Instance;
         if (pause != null && pause.controllerStartPauses) Row("Pause", "Start");
@@ -222,12 +285,12 @@ public class ControlsListPanel : MonoBehaviour
 
     // "W A S D" or "Arrow Keys": the first key of each direction. If a direction has several keys (Player 1 alone
     // also answers to the arrows), each set is shown: "W A S D / Arrow Keys".
-    private string MoveKeys(PlayerInputSource s)
+    private string MoveKeys()
     {
-        KeyCode[] up = s.KeysFor(playerNumber, PlayerAction.Up);
-        KeyCode[] left = s.KeysFor(playerNumber, PlayerAction.Left);
-        KeyCode[] down = s.KeysFor(playerNumber, PlayerAction.Down);
-        KeyCode[] right = s.KeysFor(playerNumber, PlayerAction.Right);
+        KeyCode[] up = Keys(PlayerAction.Up);
+        KeyCode[] left = Keys(PlayerAction.Left);
+        KeyCode[] down = Keys(PlayerAction.Down);
+        KeyCode[] right = Keys(PlayerAction.Right);
 
         int sets = Mathf.Max(Mathf.Max(up.Length, left.Length), Mathf.Max(down.Length, right.Length));
         if (sets == 0) return "-";
@@ -311,16 +374,6 @@ public class ControlsListPanel : MonoBehaviour
             case PadButton.Start: return "Start";
             case PadButton.Select: return "Select";
             default: return "-";
-        }
-    }
-
-    private string ControllerName(PlayerInputSource s)
-    {
-        switch (s.controller)
-        {
-            case ControllerSlot.None: return "None";
-            case ControllerSlot.Auto: return "Controller " + playerNumber;
-            default: return "Controller " + ((int)s.controller - (int)ControllerSlot.Controller1 + 1);
         }
     }
 }

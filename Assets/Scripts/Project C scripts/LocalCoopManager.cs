@@ -79,9 +79,10 @@ public static class LocalCoop
 ///   - adds Player 2 when two-player mode turns on and removes them when it turns off.
 ///
 /// Player 2: drag in EITHER the Player 2 PREFAB (it gets spawned / destroyed) OR a Player 2 object that already
-/// sits in the scene (it gets switched on / off). Either way it needs a PlayerInputSource set to Player Number 2.
-/// Make the Player 2 prefab by duplicating the Player 1 prefab (a Prefab Variant is fine), then change its
-/// Player Number to 2 and give it its own look and its own audio sources.
+/// sits in the scene (it gets switched on / off). Either way, put the same prefab (or object) in Element 1 of the Players list
+/// of the scene's PlayerInputHub: that slot gives it the Player 2 keys and controller, so nothing is set on the character.
+/// Make the Player 2 prefab by duplicating the Player 1 prefab (a Prefab Variant is fine) and give it its own look and its own
+/// audio sources. It no longer needs its own PlayerInputSource or Player Number.
 ///
 /// From code:  LocalCoop.Toggle();   LocalCoop.Enabled
 /// </summary>

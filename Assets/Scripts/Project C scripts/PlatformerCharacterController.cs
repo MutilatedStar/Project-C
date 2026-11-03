@@ -5,10 +5,10 @@ using UnityEngine;
 /// 2D side-on (platformer) version of TopDownCharacterController, with jumping.
 /// (C# class names can't start with a number, so this is the "2D character controller".)
 ///
-/// Put it on the player with a Rigidbody2D and a Collider2D. It reads ALL input from the PlayerInputSource on the
-/// same object (Scheme = Platformer), so the same script drives Player 1 and Player 2: just set Player Number on that
-/// component. Its keys are Inspector fields there (defaults: Player 1 A/D + Space or W, Player 2 arrows + Up).
-/// Needs PlayerInputSource.cs, DirectButton.cs and LocalCoopManager.cs.
+/// Put it on the player with a Rigidbody2D and a Collider2D. It reads ALL input through PlayerInputSource.For(gameObject): the
+/// PlayerInputHub in the scene (Scheme = Platformer) gives the character its player slot, so the same script and prefab drive Player 1
+/// and Player 2. Keys are set per player in the hub (defaults: Player 1 A/D + Space or W, Player 2 arrows + Up).
+/// Needs PlayerInputHub.cs, PlayerInputSource.cs, DirectButton.cs and LocalCoopManager.cs.
 ///
 /// Jump feel: you can still jump a moment after walking off a ledge (Coyote Time), a jump pressed just before
 /// landing still happens (Jump Buffer), letting go early gives a short hop, and falling is a bit heavier than rising.
@@ -20,7 +20,6 @@ using UnityEngine;
 /// this player can set  GetComponent&lt;PlayerInputSource&gt;().Locked = true.
 /// </summary>
 [RequireComponent(typeof(Rigidbody2D))]
-[RequireComponent(typeof(PlayerInputSource))]
 public class PlatformerCharacterController : MonoBehaviour
 {
     [Header("Run")]
@@ -129,8 +128,8 @@ public class PlatformerCharacterController : MonoBehaviour
         col = GetComponent<Collider2D>();
         animator = GetComponent<Animator>();
 
-        // RequireComponent guarantees the PlayerInputSource exists (the "no jump key" check is in Start, after every Awake).
-        input = GetComponent<PlayerInputSource>();
+        // The PlayerInputHub in the scene gives this character its player slot (the "no jump key" check is in Start, after every Awake).
+        input = PlayerInputSource.For(gameObject);
 
         if (col == null)
         {
@@ -170,7 +169,7 @@ public class PlatformerCharacterController : MonoBehaviour
         if (input.KeysFor(PlayerAction.Jump).Length == 0 && input.JumpButtonUnset())
         {
             Debug.LogWarning("PlatformerCharacterController on '" + name + "': this player has no Jump key or button " +
-                             "(its keys for Player " + input.playerNumber + " list none). Add a Jump key under Keys By Player.", this);
+                             "(its keys for Player " + input.playerNumber + " list none). Add a Jump key to that player in the PlayerInputHub.", this);
         }
     }
 
