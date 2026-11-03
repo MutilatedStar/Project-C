@@ -204,6 +204,12 @@ public class SplitScreenCamera : MonoBehaviour
         }
     }
 
+    /// <summary>The sorting order of the canvas that shows the two views. HUD canvases must sort ABOVE it (CoopHudPanel checks this).</summary>
+    public int CompositeCanvasSortingOrder
+    {
+        get { return dynamicCamera != null ? dynamicCamera.canvasSortingOrder : DynamicScreenCamera.DefaultCanvasSortingOrder; }
+    }
+
     /// <summary>True when the source camera has an enabled Unity Pixel Perfect Camera component.</summary>
     public bool UsesPixelPerfectCamera
     {
@@ -571,7 +577,7 @@ public class SplitScreenCamera : MonoBehaviour
     // UnityEngine.U2D.PixelPerfectCamera, modern URP uses UnityEngine.Rendering.Universal.PixelPerfectCamera,
     // and older URP releases used UnityEngine.Experimental.Rendering.Universal.PixelPerfectCamera.
     // Reflection lets these scripts support either implementation without a hard package dependency.
-    private static Component FindPixelPerfectCamera(Camera cam)
+    private static Component SearchPixelPerfectCamera(Camera cam)
     {
         if (cam == null) return null;
         Component[] components = cam.GetComponents<Component>();
@@ -592,7 +598,64 @@ public class SplitScreenCamera : MonoBehaviour
         return null;
     }
 
-    private static bool HasActivePixelPerfectCamera(Camera cam)
+    // The lookup above allocates an array and the PPU read uses reflection. MoveCamera and the compositor ask about
+    // Pixel Perfect Camera several times EVERY FRAME, so the answer is kept per camera and only searched again if the
+    // component was destroyed or just added (InvalidatePixelPerfect).
+    private sealed class PixelPerfectCache
+    {
+        public Camera camera;
+        public Component component;
+        public PropertyInfo ppuProperty;
+        public bool searched;
+        public bool hadComponent;
+        public bool ppuLooked;
+    }
+
+    private readonly PixelPerfectCache[] ppCache = { new PixelPerfectCache(), new PixelPerfectCache() };   // Camera 1, Camera 2
+
+    private PixelPerfectCache CacheFor(Camera cam)
+    {
+        if (cam == null) return null;
+
+        PixelPerfectCache slot = null;
+        for (int i = 0; i < ppCache.Length; i++)
+        {
+            if (ppCache[i].camera == cam) { slot = ppCache[i]; break; }
+        }
+        if (slot == null)
+        {
+            slot = ppCache[0].camera == null ? ppCache[0] : ppCache[1];
+            slot.camera = cam;
+            slot.searched = false;
+        }
+
+        if (slot.searched && slot.hadComponent && slot.component == null) slot.searched = false;   // it was destroyed
+        if (!slot.searched)
+        {
+            slot.component = SearchPixelPerfectCamera(cam);
+            slot.hadComponent = slot.component != null;
+            slot.ppuProperty = null;
+            slot.ppuLooked = false;
+            slot.searched = true;
+        }
+        return slot;
+    }
+
+    private void InvalidatePixelPerfect(Camera cam)
+    {
+        for (int i = 0; i < ppCache.Length; i++)
+        {
+            if (ppCache[i].camera == cam) ppCache[i].searched = false;
+        }
+    }
+
+    private Component FindPixelPerfectCamera(Camera cam)
+    {
+        PixelPerfectCache c = CacheFor(cam);
+        return c != null ? c.component : null;
+    }
+
+    private bool HasActivePixelPerfectCamera(Camera cam)
     {
         Component component = FindPixelPerfectCamera(cam);
         Behaviour behaviour = component as Behaviour;
@@ -612,6 +675,7 @@ public class SplitScreenCamera : MonoBehaviour
             try
             {
                 target = targetCamera.gameObject.AddComponent(source.GetType());
+                InvalidatePixelPerfect(targetCamera);
             }
             catch (Exception e)
             {
@@ -650,18 +714,17 @@ public class SplitScreenCamera : MonoBehaviour
             targetBehaviour.enabled = sourceBehaviour.enabled;
     }
 
-    private static int GetPixelPerfectAssetsPPU(Camera cam)
+    private static int ReadAssetsPPU(PixelPerfectCache cache)
     {
-        return GetPixelPerfectAssetsPPU(FindPixelPerfectCamera(cam));
-    }
-
-    private static int GetPixelPerfectAssetsPPU(Component component)
-    {
-        if (component == null) return 0;
+        if (cache == null || cache.component == null) return 0;
         try
         {
-            PropertyInfo ppu = component.GetType().GetProperty("assetsPPU", BindingFlags.Instance | BindingFlags.Public);
-            if (ppu != null && ppu.CanRead) return Convert.ToInt32(ppu.GetValue(component, null));
+            if (!cache.ppuLooked)
+            {
+                cache.ppuLooked = true;
+                cache.ppuProperty = cache.component.GetType().GetProperty("assetsPPU", BindingFlags.Instance | BindingFlags.Public);
+            }
+            if (cache.ppuProperty != null && cache.ppuProperty.CanRead) return Convert.ToInt32(cache.ppuProperty.GetValue(cache.component, null));
         }
         catch (Exception) { }
         return 0;
@@ -780,10 +843,11 @@ public class SplitScreenCamera : MonoBehaviour
         Vector3 target = focus + offset;
         Transform ct = cam.transform;
 
-        Component pixelPerfectComponent = FindPixelPerfectCamera(cam);
+        PixelPerfectCache pp = CacheFor(cam);
+        Component pixelPerfectComponent = pp != null ? pp.component : null;
         Behaviour pixelPerfectBehaviour = pixelPerfectComponent as Behaviour;
         bool pixelPerfect = pixelPerfectComponent != null && (pixelPerfectBehaviour == null || pixelPerfectBehaviour.enabled);
-        int ppu = pixelPerfect ? GetPixelPerfectAssetsPPU(pixelPerfectComponent) : 0;
+        int ppu = pixelPerfect ? ReadAssetsPPU(pp) : 0;
         if (ppu > 0) target = SnapToPixelGrid(target, ppu);
 
         bool jump = snap || (snapDistance > 0f && (ct.position - target).sqrMagnitude > snapDistance * snapDistance);

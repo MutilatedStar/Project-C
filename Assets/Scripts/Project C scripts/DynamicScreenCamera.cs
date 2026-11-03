@@ -33,7 +33,10 @@ public class DynamicScreenCamera : MonoBehaviour
     [Tooltip("How quickly the line turns when the players move round each other. Higher = quicker.")]
     public float turnSpeed = 6f;
     [Tooltip("Draw order of the canvas this script makes. Keep it BELOW your HUD canvases so the HUD stays on top.")]
-    public int canvasSortingOrder = -1000;
+    public int canvasSortingOrder = DefaultCanvasSortingOrder;
+
+    /// <summary>Where the compositor's canvas sorts unless you change it. HUD canvases must be above this.</summary>
+    public const int DefaultCanvasSortingOrder = -1000;
 
     /// <summary>True while two views are showing right now (the line is on screen).</summary>
     public bool IsSplit { get { return running && blend > ShowThreshold; } }

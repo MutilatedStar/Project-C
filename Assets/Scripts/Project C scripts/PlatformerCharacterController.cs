@@ -6,8 +6,8 @@ using UnityEngine;
 /// (C# class names can't start with a number, so this is the "2D character controller".)
 ///
 /// Put it on the player with a Rigidbody2D and a Collider2D. It reads ALL input from the PlayerInputSource on the
-/// same object (Scheme = Platformer), so the same script drives Player 1 (A/D + Space or W, Controller 1) and
-/// Player 2 (arrow keys, Up to jump, Controller 2): just set Player Number on that component.
+/// same object (Scheme = Platformer), so the same script drives Player 1 and Player 2: just set Player Number on that
+/// component. Its keys are Inspector fields there (defaults: Player 1 A/D + Space or W, Player 2 arrows + Up).
 /// Needs PlayerInputSource.cs, DirectButton.cs and LocalCoopManager.cs.
 ///
 /// Jump feel: you can still jump a moment after walking off a ledge (Coyote Time), a jump pressed just before
@@ -129,19 +129,8 @@ public class PlatformerCharacterController : MonoBehaviour
         col = GetComponent<Collider2D>();
         animator = GetComponent<Animator>();
 
+        // RequireComponent guarantees the PlayerInputSource exists (the "no jump key" check is in Start, after every Awake).
         input = GetComponent<PlayerInputSource>();
-        if (input == null)
-        {
-            input = gameObject.AddComponent<PlayerInputSource>();
-            input.scheme = ControlScheme.Platformer;
-            Debug.LogWarning("PlatformerCharacterController on '" + name + "': there was no PlayerInputSource, so one was added " +
-                             "as Player 1. For Player 2, add it yourself and set Player Number to 2.", this);
-        }
-        else if (input.scheme != ControlScheme.Platformer)
-        {
-            Debug.LogWarning("PlatformerCharacterController on '" + name + "': its PlayerInputSource is set to the TopDown " +
-                             "scheme, so Space attacks instead of jumping. Set Scheme to Platformer.", this);
-        }
 
         if (col == null)
         {
@@ -172,6 +161,16 @@ public class PlatformerCharacterController : MonoBehaviour
         {
             footstepSource.playOnAwake = false;
             basePitch = footstepSource.pitch;
+        }
+    }
+
+    // After every Awake, so PlayerInputSource has already filled in its default keys.
+    private void Start()
+    {
+        if (input.KeysFor(PlayerAction.Jump).Length == 0 && input.JumpButtonUnset())
+        {
+            Debug.LogWarning("PlatformerCharacterController on '" + name + "': this player has no Jump key or button " +
+                             "(its keys for Player " + input.playerNumber + " list none). Add a Jump key under Keys By Player.", this);
         }
     }
 
@@ -207,15 +206,8 @@ public class PlatformerCharacterController : MonoBehaviour
 
         if (!locked)
         {
-            // Run: tap to switch on/off, or hold.
-            if (sprintToggle)
-            {
-                if (input.SprintPressed) isSprinting = !isSprinting;
-            }
-            else
-            {
-                isSprinting = input.SprintHeld;
-            }
+            // Run: tap to switch on/off, or hold (same rule as the top-down controller, kept in PlayerInputSource).
+            isSprinting = input.ResolveRun(sprintToggle, isSprinting);
 
             float raw = input.Move.x;
             moveX = analogMovement ? raw : (raw > 0.01f ? 1f : (raw < -0.01f ? -1f : 0f));

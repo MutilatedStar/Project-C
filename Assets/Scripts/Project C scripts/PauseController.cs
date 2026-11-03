@@ -237,6 +237,9 @@ public class PauseController : MonoBehaviour
     // The player is found through its movement script, like FloorController does. Only looked up when a pause is attempted.
     private bool PlayerIsDead()
     {
+        // Co-op players register themselves, so no search is needed: the pause is blocked once every player that counts is dead.
+        if (CoopHealth.Players.Count > 0) return CoopHealth.AllCountedDead;
+
         if (playerHealth == null && Time.unscaledTime >= nextHealthSearch)
         {
             nextHealthSearch = Time.unscaledTime + 1f;

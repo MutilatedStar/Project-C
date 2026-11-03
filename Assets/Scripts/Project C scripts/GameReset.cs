@@ -2,7 +2,7 @@ using UnityEngine;
 using Ilumisoft.HealthSystem;
 
 /// <summary>
-/// One place that puts a run back to its starting state: score to 0 and the player's health to full.
+/// One place that puts a run back to its starting state: score to 0 and every player's health to full.
 ///
 /// Used by:
 ///   - PauseController's "Quit to Main Menu" button
@@ -23,21 +23,30 @@ public static class GameReset
     }
 
     /// <summary>
-    /// Gives the player full health again, even if the player is dead.
+    /// Gives EVERY player full health again, even a dead one.
     /// (SetHealth is used on purpose: AddHealth and ApplyDamage do nothing on a dead player.)
-    /// Does nothing if there is no player in the loaded scenes: a new player starts at full health by itself.
+    /// Co-op players register themselves in CoopHealth.Players, so nothing is searched for. Only a project whose player
+    /// still has the old health component falls back to one search for the single player.
+    /// A Player 2 that is switched off isn't registered: it is created fresh (full health) when it is switched on again.
     /// </summary>
     public static void RestorePlayerHealth()
     {
-        HealthComponent health = FindPlayerHealth();
-        if (health == null) return;
+        var players = CoopHealth.Players;
+        if (players.Count > 0)
+        {
+            for (int i = 0; i < players.Count; i++) players[i].SetHealth(players[i].MaxHealth);
+            return;
+        }
+
+        HealthComponent health = FindLegacyPlayerHealth();
+        if (health == null) return;   // no player in the loaded scenes: a new player starts at full health by itself
 
         health.SetHealth(health.MaxHealth);
     }
 
-    // The player is found through its movement script, the same way PauseController and FloorController do it.
-    // Inactive objects are included, and so is a player that is kept alive between scenes (DontDestroyOnLoad).
-    private static HealthComponent FindPlayerHealth()
+    // Legacy single-player path, kept so a player without CoopHealth still resets. Inactive objects are included, and so is
+    // a player that is kept alive between scenes (DontDestroyOnLoad).
+    private static HealthComponent FindLegacyPlayerHealth()
     {
         var controller = Object.FindAnyObjectByType<Cainos.PixelArtTopDown_Basic.TopDownCharacterController>(FindObjectsInactive.Include);
         if (controller == null) return null;

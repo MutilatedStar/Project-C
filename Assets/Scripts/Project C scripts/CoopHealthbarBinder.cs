@@ -15,6 +15,13 @@ using Ilumisoft.HealthSystem.UI;
 ///   3. Drag that child into Healthbar below and set Player Number (1 or 2).
 /// Works for Player 1 as well, so both bars behave the same.
 ///
+/// IF THE BAR NEVER APPEARS, in this order (a message in the Console names the one that applies after 3 seconds):
+///   1. The Healthbar slot is empty, or the bar is this object / a parent of it (must be a CHILD).
+///   2. No CoopHealth with this Player Number is in the game: the player prefab needs CoopHealth (not plain Health)
+///      and PlayerInputSource.Player Number must match. Player 2 also needs LocalCoop switched on.
+///   3. The canvas is not Screen Space - Overlay, or its Sort Order is at or below the split-screen picture
+///      (CoopHudPanel warns about both when the bar is enabled).
+///
 /// WHERE the bars sit on screen is handled by CoopHealthbarLayout (free / mirror / auto-snap). This script moves
 /// nothing itself: it only shows and hides the bar and lets the layout script find it (through CoopHudPanel).
 /// </summary>
@@ -37,22 +44,71 @@ public class CoopHealthbarBinder : CoopHudPanel
         return Get(HudGroup.Health, playerNumber) as CoopHealthbarBinder;
     }
 
+    private float warnAt;
+    private bool everShown;
+    private bool warned;
+
     private void Awake()
     {
+        warnAt = Time.unscaledTime + 3f;
+        if (healthbar == null)
+        {
+            Debug.LogError("CoopHealthbarBinder on '" + name + "': the Healthbar slot is empty, so nothing can be shown. " +
+                           "Drag the bar (a CHILD of this object) into it.", this);
+            enabled = false;
+            return;
+        }
+
+        // Hiding the bar would hide this script too if the bar is this object or one of its parents, and the bar would
+        // then vanish for good. Refuse to hide it and say so, instead of silently disappearing.
+        if (healthbar.gameObject == gameObject || transform.IsChildOf(healthbar.transform))
+        {
+            Debug.LogError("CoopHealthbarBinder on '" + name + "': the Healthbar is this object (or a parent of it). This object has to " +
+                           "stay switched on while the bar is hidden, so the bar must be a CHILD. Make an empty parent, put this script " +
+                           "on the parent and the bar under it. The bar is left as it is.", this);
+            enabled = false;
+            return;
+        }
+
         // Hidden until the player exists, so the bar never runs without a health to read.
-        if (healthbar != null) healthbar.gameObject.SetActive(false);
+        healthbar.gameObject.SetActive(false);
     }
 
     private void Update()
     {
-        if (healthbar == null) return;
+        if (healthbar == null) return;   // destroyed at runtime
 
         CoopHealth player = CoopHealth.Get(playerNumber);
         bool show = player != null && CoopRules.Counts(playerNumber);
 
-        // Connect BEFORE switching the bar on: its Start reads the health straight away.
-        if (show && healthbar.Health != player) healthbar.Health = player;
+        if (show && healthbar.Health != player)
+        {
+            // A respawned player is a NEW object. Switch the bar off first so it re-reads the new health when it comes back on,
+            // and connect BEFORE it is switched on: its Start reads the health straight away.
+            if (healthbar.gameObject.activeSelf) healthbar.gameObject.SetActive(false);
+            healthbar.Health = player;
+        }
 
         if (healthbar.gameObject.activeSelf != show) healthbar.gameObject.SetActive(show);
+
+        if (show) everShown = true;
+        else if (!everShown && !warned && Time.unscaledTime >= warnAt) ExplainMissingBar(player);
+    }
+
+    // One message, after three seconds, naming the real reason the bar has not appeared (instead of guessing).
+    private void ExplainMissingBar(CoopHealth player)
+    {
+        warned = true;
+
+        // Player 2 hidden because two-player mode is off, or a single-player rule is on: that is the design, not a fault.
+        if (player != null && !CoopRules.Counts(playerNumber)) return;
+        if (player == null && playerNumber > 1 && !LocalCoop.Enabled) return;
+
+        if (player == null)
+        {
+            Debug.LogWarning("CoopHealthbarBinder (Player " + playerNumber + "): no CoopHealth with Player Number " + playerNumber +
+                             " is in the game. Check that the player prefab has CoopHealth (not the plain Health component) and that its " +
+                             "PlayerInputSource says Player Number " + playerNumber + (playerNumber > 1 ? ", and that Player 2 is switched on (LocalCoopManager)." : "."), this);
+        }
     }
 }

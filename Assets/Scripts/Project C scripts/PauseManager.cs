@@ -50,7 +50,10 @@ public class PauseManager : MonoBehaviour
     public static System.Func<bool> IsOnlineCheck;
 
     [Header("Pause keys")]
+    [Tooltip("Pausing is shared by every player, so it is NOT a per-player binding in PlayerInputSource.")]
     public KeyCode[] pauseKeys = { KeyCode.P, KeyCode.Escape };
+    [Tooltip("The Start button of ANY assigned controller also pauses (needs the Input System package).")]
+    public bool controllerStartPauses = true;
     [Tooltip("Off = the keys and the Pause Button do nothing (cutscenes, game over screens...). Pause() / Resume() from code still work.")]
     public bool allowPausing = true;
     [Tooltip("Opens the pause menu when the game window loses focus (alt-tab, phone call). Leave off while testing in the Editor.")]
@@ -255,6 +258,7 @@ public class PauseManager : MonoBehaviour
 
     private bool PausePressed()
     {
+        if (controllerStartPauses && ControllerSlots.AnyStartPressed()) return true;
         if (pauseKeys == null) return false;
 
         for (int i = 0; i < pauseKeys.Length; i++)

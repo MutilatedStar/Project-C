@@ -12,7 +12,7 @@ using Cainos.PixelArtTopDown_Basic;
 /// TWO PLAYERS: every player has their own SwordController, their own sword collection, their own sword upgrades and
 /// their own timed power-ups. It reads its buttons from the PlayerInputSource on the same object, so Player 1 uses the
 /// left half of the keyboard / Controller 1 and Player 2 the right half / Controller 2 (change the keys in
-/// PlayerInputSource, not here):
+/// PlayerInputSource's Keys, not here; defaults: swing F / Right Ctrl, previous / next Q, R / Comma, Period):
 ///   Attack (tap)       swing the current sword the way the player is facing. The blade always chops DOWNWARD on screen.
 ///   Attack (keep held) the swing happens straight away, then a charge starts. When the player GLOWS the spin is ready:
 ///                      let go for a full 360-degree spin that hits every foe around you.
@@ -34,7 +34,7 @@ using Cainos.PixelArtTopDown_Basic;
 ///
 /// Notebook open (or FoeController.Frozen) = no swinging, no switching, no damage, same as the foes.
 ///
-/// Collecting: a sword with "Unlocked At Start" OFF can't be equipped (Q / E / 1-9 skip it) until UnlockSword,
+/// Collecting: a sword with "Unlocked At Start" OFF can't be equipped (the previous / next keys and 1-9 skip it) until UnlockSword,
 /// UnlockAllSwords or UnlockByName is called (a pickup, the shop...). Tick Debug Unlock All Swords to own every sword.
 ///
 /// Upgrades: SwordShop.cs (per sword) and PlayerUpgrades.cs (the player) hand their bonuses in through

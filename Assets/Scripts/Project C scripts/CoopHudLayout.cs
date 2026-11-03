@@ -130,6 +130,9 @@ public abstract class CoopHudLayout : MonoBehaviour
         }
         if (bar == null) return;
 
+        // Screen pixels only mean something on an Overlay canvas. On any other canvas the panel stays where it was put.
+        if (!bar.OnOverlayCanvas) return;
+
         Transform slot = bar.transform;
         Vector2 centre, half;
         GetFootprint(bar, out centre, out half);
