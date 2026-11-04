@@ -24,6 +24,7 @@ using Ilumisoft.HealthSystem.UI;
 ///
 /// WHERE the bars sit on screen is handled by CoopHealthbarLayout (free / mirror / auto-snap). This script moves
 /// nothing itself: it only shows and hides the bar and lets the layout script find it (through CoopHudPanel).
+/// The bar's size is measured automatically, so leave the Footprint slot empty.
 /// </summary>
 public class CoopHealthbarBinder : CoopHudPanel
 {
@@ -35,8 +36,10 @@ public class CoopHealthbarBinder : CoopHudPanel
     /// <summary>True while the bar is showing (that player is in the game).</summary>
     public override bool IsShown { get { return healthbar != null && healthbar.gameObject.activeSelf; } }
 
-    // The bar's own rectangle is its size, unless a Footprint is set.
+    // The bar's own rectangle is its size, unless a Footprint is set. (Leave Footprint empty: if the bar's rectangle turns out to be
+    // stretched across the screen, the pictures and text drawn inside the bar are measured instead.)
     protected override RectTransform DefaultFootprint { get { return healthbar != null ? healthbar.transform as RectTransform : null; } }
+    protected override Transform MeasureRoot { get { return healthbar != null ? healthbar.transform : transform; } }
 
     /// <summary>The binder for this player number, or null.</summary>
     public static CoopHealthbarBinder Get(int playerNumber)

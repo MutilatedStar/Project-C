@@ -17,6 +17,9 @@ using UnityEngine.UI;
 /// Merge Distance and Transition Speed, and its follow speed.
 ///
 /// Pixel Perfect compatibility uses straight horizontal/vertical halves while retaining each camera's full viewport.
+/// Horizontal and Vertical keep Player 1 on the left / top half when SplitScreenCamera's Keep Sides Fixed is on (the
+/// default). Otherwise, and always in Adaptive, the halves go by position. When they need to swap (or Adaptive turns
+/// the split 90 degrees), the split slides shut and reopens the new way round instead of snapping across.
 /// Notes: orthographic cameras only for diagonal Adaptive mode. Draw your HUD with Screen Space - Overlay canvases
 /// (a Screen Space - Camera canvas pointed at the game camera would be drawn inside the camera's texture and cut).
 /// </summary>
@@ -44,6 +47,22 @@ public class DynamicScreenCamera : MonoBehaviour
     /// <summary>True when this component is compositing a straight split to accommodate Pixel Perfect Camera.</summary>
     public bool IsPixelPerfectComposite { get; private set; }
 
+    /// <summary>
+    /// One line describing what the straight (Pixel Perfect) split is doing right now. SplitScreenCamera shows it in its Inspector
+    /// while you play, so a swap or a snap can be traced to the decision that caused it.
+    /// </summary>
+    public string DebugState
+    {
+        get
+        {
+            return "straight split: " + (pixelPerfectVertical ? "side by side" : "stacked") +
+                   ", Player 1 on the " + (pixelPerfectVertical ? (pixelPerfectFirst ? "left" : "RIGHT") : (pixelPerfectFirst ? "top" : "BOTTOM")) +
+                   ", wants split: " + pixelPerfectWantOpen +
+                   ", closing to swap: " + pixelPerfectChanging +
+                   ", blend: " + blend.ToString("0.00");
+        }
+    }
+
     /// <summary>A point on the dividing line, in screen pixels (for placing HUD).</summary>
     public Vector2 LineCentre { get; private set; }
 
@@ -53,12 +72,23 @@ public class DynamicScreenCamera : MonoBehaviour
     private const float ShowThreshold = 0.002f;
     private static readonly Rect FullRect = new Rect(0f, 0f, 1f, 1f);
 
+    // Same values SplitScreenCamera uses for its own straight split, so both paths feel the same.
+    // The slide never goes slower than Transition Speed x this (screens per second), so the line is really gone a moment
+    // after the players come together instead of fading out for ages.
+    private const float MinSlideFraction = 0.2f;
+    // Keep Sides Fixed off: how far past the other player (as a fraction of the screen's width or height) someone must go
+    // before the two halves swap.
+    private const float SwapMargin = 0.1f;
+
     private SplitScreenCamera host;
     private bool running;
     private bool splitOpen;      // the split/merge decision (with its own hysteresis)
     private float blend;         // 0 = one screen, 1 = fully split; the line slides while it moves between the two
     private float angle;         // degrees: direction from Player 1 to Player 2
-    private bool pixelPerfectVertical = true;
+    private bool pixelPerfectVertical = true;   // straight split: true = side by side, false = one above the other
+    private bool pixelPerfectFirst = true;       // straight split: Player 1 has the left / top half (false: Player 2 does)
+    private bool pixelPerfectWantOpen;           // straight split: the split/merge decision (with its own hysteresis)
+    private bool pixelPerfectChanging;           // straight split: closing so it can reopen the other way round
 
     private RenderTexture rt1;
     private RenderTexture rt2;
@@ -107,6 +137,8 @@ public class DynamicScreenCamera : MonoBehaviour
             running = true;
             snap = true;        // open already laid out, with no slide
             splitOpen = false;
+            pixelPerfectWantOpen = false;
+            pixelPerfectChanging = false;
             blend = 0f;
         }
 
@@ -139,6 +171,10 @@ public class DynamicScreenCamera : MonoBehaviour
             else if (sep < Mathf.Min(host.mergeDistance, host.splitDistance)) splitOpen = false;
         }
 
+        // If the straight split takes over later (Dynamic Adaptive switched off), it carries on from this decision.
+        pixelPerfectWantOpen = splitOpen;
+        pixelPerfectChanging = false;
+
         // ---- 2. Which way does the line run? It turns smoothly, and just snaps while it's out of sight.
         float targetAngle = (both && d.sqrMagnitude > 0.000001f) ? Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg : angle;
         float dt = Time.unscaledDeltaTime;
@@ -148,9 +184,9 @@ public class DynamicScreenCamera : MonoBehaviour
 
         // ---- 3. Slide the line in or out.
         float k = snap ? 1f : 1f - Mathf.Exp(-host.transitionSpeed * dt);
+        float minStep = snap ? 1f : host.transitionSpeed * MinSlideFraction * dt;
         float goal = splitOpen ? 1f : 0f;
-        blend = Mathf.Lerp(blend, goal, k);
-        if (Mathf.Abs(blend - goal) < ShowThreshold) blend = goal;
+        blend = Slide(blend, goal, k, minStep);
 
         // ---- 4. Where does each camera look?
         float rad = angle * Mathf.Deg2Rad;
@@ -237,6 +273,8 @@ public class DynamicScreenCamera : MonoBehaviour
             running = true;
             snap = true;
             splitOpen = false;
+            pixelPerfectWantOpen = false;
+            pixelPerfectChanging = false;
             blend = 0f;
         }
 
@@ -256,67 +294,90 @@ public class DynamicScreenCamera : MonoBehaviour
         float halfH = cam1 != null && cam1.orthographic ? Mathf.Max(0.01f, cam1.orthographicSize) : host.BaseSize;
         float halfW = halfH * w / h;
         Vector2 d = new Vector2(p2.x - p1.x, p2.y - p1.y);
-        bool wasOpen = splitOpen;
-        bool vertical = pixelPerfectVertical;
 
+        // A split that is on screen (even one still sliding open or shut) is never turned into a different one. If the
+        // players need it the other way round, it slides shut first and reopens the new way once it is gone. That is
+        // what stops the views snapping across each other when the players swap, or when Adaptive turns the split.
+        bool onScreen = blend > ShowThreshold;
+        bool wantVertical = pixelPerfectVertical;
+
+        // ---- 1. One split or none, and which direction?
         switch (host.mode)
         {
             case SplitScreenCamera.SplitMode.Horizontal:
-                splitOpen = both;
-                vertical = false;
+                pixelPerfectWantOpen = both;
+                wantVertical = false;
                 break;
 
             case SplitScreenCamera.SplitMode.Vertical:
-                splitOpen = both;
-                vertical = true;
+                pixelPerfectWantOpen = both;
+                wantVertical = true;
                 break;
 
             case SplitScreenCamera.SplitMode.Retro:
-                splitOpen = false;
+                pixelPerfectWantOpen = false;
                 break;
 
             default: // Adaptive, keeping the same split/merge hysteresis as the normal camera path.
                 if (!both)
                 {
-                    splitOpen = false;
+                    pixelPerfectWantOpen = false;
                 }
                 else
                 {
                     float sepX = Mathf.Abs(d.x) / Mathf.Max(0.01f, halfW * 2f);
                     float sepY = Mathf.Abs(d.y) / Mathf.Max(0.01f, halfH * 2f);
                     float sep = Mathf.Max(sepX, sepY);
-                    if (!splitOpen)
+                    if (!pixelPerfectWantOpen)
                     {
-                        if (sep > host.splitDistance) splitOpen = true;
+                        if (sep > host.splitDistance) pixelPerfectWantOpen = true;
                     }
                     else if (sep < Mathf.Min(host.mergeDistance, host.splitDistance))
                     {
-                        splitOpen = false;
+                        pixelPerfectWantOpen = false;
                     }
 
-                    if (splitOpen)
-                    {
-                        if (!wasOpen) vertical = sepX >= sepY;
-                        else if (vertical && sepY > sepX * host.flipBias) vertical = false;
-                        else if (!vertical && sepX > sepY * host.flipBias) vertical = true;
-                    }
+                    // No split on screen: split along the bigger gap. One is showing: it only turns 90 degrees when the
+                    // other gap is clearly bigger (Flip Bias).
+                    if (!onScreen) wantVertical = sepX >= sepY;
+                    else if (pixelPerfectVertical && sepY > sepX * host.flipBias) wantVertical = false;
+                    else if (!pixelPerfectVertical && sepX > sepY * host.flipBias) wantVertical = true;
                 }
                 break;
         }
 
-        pixelPerfectVertical = vertical;
-
-        // Point the mask from Player 1 toward Player 2, but constrain it to a straight line.
-        // This preserves player ownership if the characters cross one another.
-        if (vertical)
-            angle = d.x >= 0f ? 0f : 180f;
+        // ---- 2. Who takes the left / top half? Horizontal and Vertical with Keep Sides Fixed on: always Player 1,
+        //         wherever the players are. Otherwise (Adaptive, or Keep Sides Fixed off) it goes by position.
+        bool wantFirst;
+        if (!both || host.SidesFixed || host.mode == SplitScreenCamera.SplitMode.Retro)
+            wantFirst = true;
         else
-            angle = d.y >= 0f ? 90f : -90f;
+            wantFirst = ChooseFirst(wantVertical, !onScreen || wantVertical != pixelPerfectVertical, d, halfW * 2f, halfH * 2f);
 
+        if (!onScreen)
+        {
+            // Nothing showing: set the layout up the way the players want it.
+            pixelPerfectVertical = wantVertical;
+            pixelPerfectFirst = wantFirst;
+            pixelPerfectChanging = false;
+        }
+        else
+        {
+            pixelPerfectChanging = pixelPerfectWantOpen &&
+                                   (wantVertical != pixelPerfectVertical || wantFirst != pixelPerfectFirst);
+        }
+
+        splitOpen = pixelPerfectWantOpen && !pixelPerfectChanging;
+        bool vertical = pixelPerfectVertical;
+
+        // The line points from Player 1's half towards Player 2's half.
+        angle = vertical ? (pixelPerfectFirst ? 0f : 180f) : (pixelPerfectFirst ? -90f : 90f);
+
+        // ---- 3. Slide the line in or out (never slower than the minimum speed).
         float dt = Time.unscaledDeltaTime;
         float k = snap ? 1f : 1f - Mathf.Exp(-host.transitionSpeed * dt);
-        blend = Mathf.Lerp(blend, splitOpen ? 1f : 0f, k);
-        if (Mathf.Abs(blend - (splitOpen ? 1f : 0f)) < ShowThreshold) blend = splitOpen ? 1f : 0f;
+        float minStep = snap ? 1f : host.transitionSpeed * MinSlideFraction * dt;
+        blend = Slide(blend, splitOpen ? 1f : 0f, k, minStep);
 
         float rad = angle * Mathf.Deg2Rad;
         Vector2 n = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
@@ -403,6 +464,8 @@ public class DynamicScreenCamera : MonoBehaviour
     {
         running = false;
         splitOpen = false;
+        pixelPerfectWantOpen = false;
+        pixelPerfectChanging = false;
         blend = 0f;
         IsPixelPerfectComposite = false;
 
@@ -509,6 +572,30 @@ public class DynamicScreenCamera : MonoBehaviour
         state.camera.backgroundColor = state.backgroundColor;
         state.camera.enabled = state.enabled;
         state = new CameraRenderState();
+    }
+
+    // ------------------------------------------------------------ straight-split helpers
+
+    // Moves a value towards its target by the larger of two steps: the usual ease-out step (k of the way) or minStep.
+    // The ease-out gives the quick start; minStep stops the end slowing to a crawl, and MoveTowards lands exactly on the
+    // target instead of creeping up on it. (Same as SplitScreenCamera's own slide.)
+    private static float Slide(float current, float target, float k, float minStep)
+    {
+        float easeStep = Mathf.Abs(target - current) * k;
+        return Mathf.MoveTowards(current, target, Mathf.Max(easeStep, minStep));
+    }
+
+    // Does Player 1 take the left / top half? By position: whoever is further left / higher up. A fresh choice goes
+    // straight by position. If a split is already showing, it keeps what it has until a player has crossed over by
+    // SwapMargin of the screen, so two players walking side by side don't make the halves flutter back and forth.
+    private bool ChooseFirst(bool vertical, bool freshChoice, Vector2 d, float viewW, float viewH)
+    {
+        // How far Player 2 is past Player 1 towards the right / bottom. Zero or more: Player 1 is the left / top one.
+        float along = vertical ? d.x : -d.y;
+        if (freshChoice) return along >= 0f;
+
+        float margin = SwapMargin * (vertical ? viewW : viewH);
+        return pixelPerfectFirst ? along >= -margin : along > margin;
     }
 
     // ------------------------------------------------------------ geometry

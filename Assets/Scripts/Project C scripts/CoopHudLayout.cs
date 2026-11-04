@@ -13,15 +13,18 @@ using UnityEngine;
 ///              keeps its place relative to its OWN view, so when the screen splits the pair splits with it.
 ///   Auto Snap  No placing at all: each panel snaps to a corner of its own view (health bars: Player 1 top-left, Player 2
 ///              top-right by default; inventory bars start at the bottom corners). It works for one screen, a horizontal
-///              split, a vertical split and the slanted Dynamic Adaptive split, and the panels glide along while the
-///              split opens, closes or turns.
+///              split, a vertical split and the slanted Dynamic Adaptive split, with or without Pixel Perfect Camera, and
+///              the panels glide along while the split opens, closes, swaps sides or turns.
 ///
 /// These are three exclusive choices, so it is one three-way selector rather than three tick boxes that could
 /// contradict each other. The optional button cycles through them.
 ///
-/// What counts as a panel's size is its Footprint (a health bar's own Rect Transform, an inventory bar's own Rect
-/// Transform, or the Footprint you set on it). Positions are in screen pixels, so use Screen Space - Overlay canvases
-/// for the HUD. A panel that isn't showing (that player isn't in the game) is left alone until it appears.
+/// What counts as a panel's size is measured by each panel itself (a health bar's own Rect Transform, an inventory
+/// bar's own Rect Transform, or, for a bar whose rectangle is stretched across the screen, the pictures drawn in it).
+/// You do not have to set a Footprint. Positions are in screen pixels, so use Screen Space - Overlay canvases for the
+/// HUD (a panel on any other kind of canvas is repaired, or at least reported, by CoopHudPanel). A panel that isn't
+/// showing (that player isn't in the game) is left alone until it appears. A panel placed INSIDE a PlayerViewFrame is
+/// left alone too: that frame covers exactly its player's view, and the panel's own anchors keep it in its corner.
 /// </summary>
 public abstract class CoopHudLayout : MonoBehaviour
 {
@@ -51,6 +54,16 @@ public abstract class CoopHudLayout : MonoBehaviour
     [Tooltip("LeftRight: Player 1's panel on the left becomes Player 2's on the right. TopBottom: top becomes bottom. Both: opposite corner.")]
     public MirrorAcross mirrorAcross = MirrorAcross.LeftRight;
 
+    [Header("Split screen")]
+    [Tooltip("The two views can swap sides (the players walk past each other, or Keep Sides Fixed is off on the camera). ON: each panel then " +
+             "mirrors with its view, so it stays on the same edge of the screen instead of ending up next to the dividing line. " +
+             "OFF: a panel always keeps the same place inside its own view. Not used for the slanted split.")]
+    public bool followSwappedViews = true;
+
+    [Header("Debug (read only: filled in while you play in the Editor)")]
+    [Tooltip("What this layout can see right now: the split-screen camera, the views, and for each player's panel whether it was found, whether it is showing, and where it is being sent.")]
+    [SerializeField, TextArea(6, 12)] private string status = "";
+
     [Header("Auto Snap and Mirror")]
     [Tooltip("Gap in screen pixels between a panel and the edge of its view (Auto Snap).")]
     public Vector2 margin = new Vector2(24f, 24f);
@@ -65,10 +78,16 @@ public abstract class CoopHudLayout : MonoBehaviour
         public bool settledFree;
         public Vector3 authored;       // where you placed it: anchored position (or local position)
         public Vector2 authoredNorm;   // where its centre sat on the screen, as 0..1
+
+        // For the Inspector read-out only.
+        public string note = "not looked at yet";
+        public Vector2 centre;         // where the panel is now (screen pixels)
+        public Vector2 size;           // how big it measured
+        public Vector2 target;         // where it is being sent
+        public bool hasTarget;
     }
 
     private readonly BarState[] states = { new BarState(), new BarState() };
-    private static readonly Vector3[] worldCorners = new Vector3[4];
     private LayoutMode shownMode = (LayoutMode)(-1);
 
     // ------------------------------------------------------------ mode (callable from UI buttons / dropdowns)
@@ -105,6 +124,34 @@ public abstract class CoopHudLayout : MonoBehaviour
         float k = 1f - Mathf.Exp(-moveSpeed * Time.unscaledDeltaTime);
 
         for (int i = 0; i < 2; i++) Layout(i, views, k);
+
+        RefreshStatus(rig, views);
+    }
+
+    // ------------------------------------------------------------ Inspector read-out (Editor only)
+
+#if UNITY_EDITOR
+    private float nextStatus;
+#endif
+
+    private void RefreshStatus(SplitScreenCamera rig, SplitViews views)
+    {
+#if UNITY_EDITOR
+        if (Time.unscaledTime < nextStatus) return;
+        nextStatus = Time.unscaledTime + 0.25f;
+
+        string viewText = !views.two ? "one view" : (views.slanted ? "two views, slanted line" : "two views, straight line");
+        status = "Mode: " + mode + "   Split-screen camera: " + (rig != null ? "found" : "NOT FOUND (whole screen is used)") +
+                 "\nScreen: " + Screen.width + " x " + Screen.height + "   Now: " + viewText +
+                 "\nView 1: " + views.view1 + "\nView 2: " + views.view2;
+
+        for (int i = 0; i < 2; i++)
+        {
+            BarState st = states[i];
+            status += "\nPlayer " + (i + 1) + ": " + st.note;
+            if (st.hasTarget) status += "\n    panel at " + st.centre + "  size " + st.size + "  sent to " + st.target;
+        }
+#endif
     }
 
     private static SplitViews FullScreenViews()
@@ -128,10 +175,26 @@ public abstract class CoopHudLayout : MonoBehaviour
             st.wasShown = false;
             st.settledFree = false;
         }
-        if (bar == null) return;
+        st.hasTarget = false;
+        if (bar == null)
+        {
+            st.note = "NO PANEL found with this Player Number (" + Group + " family)";
+            return;
+        }
 
         // Screen pixels only mean something on an Overlay canvas. On any other canvas the panel stays where it was put.
-        if (!bar.OnOverlayCanvas) return;
+        if (!bar.OnOverlayCanvas)
+        {
+            st.note = "its canvas is not Screen Space - Overlay, so it is left where you put it";
+            return;
+        }
+
+        // Inside a Player View Frame, ordinary anchors keep it in its player's view. Nothing for this layout to do.
+        if (bar.InViewFrame)
+        {
+            st.note = "sits inside a Player View Frame: placed by its anchors, not by this layout";
+            return;
+        }
 
         Transform slot = bar.transform;
         Vector2 centre, half;
@@ -148,10 +211,15 @@ public abstract class CoopHudLayout : MonoBehaviour
         bool shown = bar.IsShown;
         bool snap = shown && !st.wasShown;   // just appeared: go straight to its spot
         st.wasShown = shown;
-        if (!shown) return;
+        if (!shown)
+        {
+            st.note = "panel found, but it is hidden (that player is not in the game, or does not count)";
+            return;
+        }
 
         if (mode == LayoutMode.Free)
         {
+            st.note = "Free mode: left where you put it";
             LayoutFree(st, slot, centre, k, snap);
             return;
         }
@@ -161,6 +229,12 @@ public abstract class CoopHudLayout : MonoBehaviour
 
         Vector3 delta = new Vector3(target.x - centre.x, target.y - centre.y, 0f);
         slot.position += snap ? delta : delta * k;
+
+        st.note = "placing it (" + mode + ")";
+        st.centre = centre;
+        st.size = half * 2f;
+        st.target = target;
+        st.hasTarget = true;
     }
 
     // ------------------------------------------------------------ Free
@@ -221,7 +295,13 @@ public abstract class CoopHudLayout : MonoBehaviour
     {
         Corner wanted = player == 1 ? player1Corner : player2Corner;
 
-        if (!v.slanted) return CornerCentre(ViewOf(player, v), wanted, half);
+        if (!v.slanted)
+        {
+            // If the views have swapped sides, the corner swaps with them.
+            bool flipX, flipY;
+            FlipsFor(v, out flipX, out flipY);
+            return CornerCentre(ViewOf(player, v), FlipCorner(wanted, flipX, flipY), half);
+        }
 
         // Slanted split: every view is a corner-to-corner half of the screen. Take the wanted corner if the dividing
         // line leaves it on this player's side, otherwise the corner that sits deepest on their side.
@@ -272,6 +352,12 @@ public abstract class CoopHudLayout : MonoBehaviour
             if (mirrorAcross != MirrorAcross.LeftRight) n.y = 1f - n.y;
         }
 
+        // If the views have swapped sides, the panel's place swaps with its view.
+        bool flipX, flipY;
+        FlipsFor(v, out flipX, out flipY);
+        if (flipX) n.x = 1f - n.x;
+        if (flipY) n.y = 1f - n.y;
+
         // The same fraction of the view this bar lives in.
         Rect view = v.slanted ? FullScreen() : ViewOf(player, v);
         Vector2 centre = new Vector2(view.xMin + n.x * view.width, view.yMin + n.y * view.height);
@@ -292,6 +378,33 @@ public abstract class CoopHudLayout : MonoBehaviour
     private static Rect ViewOf(int player, SplitViews v)
     {
         return player == 1 ? v.view1 : v.view2;
+    }
+
+    // Are the two views the other way round from usual? Usual: Player 1 on the left (side by side) or on top (one above the
+    // other). The camera puts Player 1 on the right / bottom when the players have walked past each other, or when its Keep Sides
+    // Fixed is off. Worked out from where the views really are, so it also holds while a split slides open, shut or swaps.
+    private void FlipsFor(SplitViews v, out bool flipX, out bool flipY)
+    {
+        flipX = false;
+        flipY = false;
+        if (!followSwappedViews || !v.two || v.slanted) return;
+
+        float dx = v.view2.center.x - v.view1.center.x;   // positive: Player 2's view is to the right of Player 1's
+        float dy = v.view2.center.y - v.view1.center.y;   // positive: Player 2's view is above Player 1's
+
+        if (Mathf.Abs(dx) >= Mathf.Abs(dy)) flipX = dx < 0f;   // side by side, with Player 1 on the right
+        else flipY = dy > 0f;                                  // one above the other, with Player 1 on the bottom
+    }
+
+    private static Corner FlipCorner(Corner corner, bool flipX, bool flipY)
+    {
+        bool right = IsRight(corner);
+        bool top = IsTop(corner);
+        if (flipX) right = !right;
+        if (flipY) top = !top;
+
+        if (top) return right ? Corner.TopRight : Corner.TopLeft;
+        return right ? Corner.BottomRight : Corner.BottomLeft;
     }
 
     private static Rect FullScreen()
@@ -335,29 +448,10 @@ public abstract class CoopHudLayout : MonoBehaviour
         return Mathf.Clamp(value, min, max);
     }
 
-    // The bar's footprint in screen pixels: its centre and half size.
+    // The bar's footprint in screen pixels: its centre and half size. The panel measures itself (see CoopHudPanel.GetBounds),
+    // so nothing has to be assigned.
     private static void GetFootprint(CoopHudPanel bar, out Vector2 centre, out Vector2 half)
     {
-        RectTransform rect = bar.Footprint;
-        if (rect == null)
-        {
-            Vector3 p = bar.transform.position;
-            centre = new Vector2(p.x, p.y);
-            half = Vector2.zero;
-            return;
-        }
-
-        rect.GetWorldCorners(worldCorners);
-        float minX = worldCorners[0].x, maxX = minX, minY = worldCorners[0].y, maxY = minY;
-        for (int i = 1; i < 4; i++)
-        {
-            minX = Mathf.Min(minX, worldCorners[i].x);
-            maxX = Mathf.Max(maxX, worldCorners[i].x);
-            minY = Mathf.Min(minY, worldCorners[i].y);
-            maxY = Mathf.Max(maxY, worldCorners[i].y);
-        }
-
-        centre = new Vector2((minX + maxX) * 0.5f, (minY + maxY) * 0.5f);
-        half = new Vector2((maxX - minX) * 0.5f, (maxY - minY) * 0.5f);
+        bar.GetBounds(out centre, out half);
     }
 }

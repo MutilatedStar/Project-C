@@ -100,6 +100,10 @@ public class SplitScreenCamera : MonoBehaviour
     [Tooltip("How far inside the screen edge (world units) Player 2 is held, so their sprite isn't cut in half.")]
     public float retroEdgePadding = 0.5f;
 
+    [Header("Debug (read only: filled in while you play in the Editor)")]
+    [Tooltip("Which camera code is running right now, and what the split is doing. Handy for working out which script a problem is in.")]
+    [SerializeField, TextArea(2, 5)] private string activePath = "";
+
     /// <summary>True while two views are showing right now.</summary>
     public bool IsSplit
     {
@@ -362,6 +366,29 @@ public class SplitScreenCamera : MonoBehaviour
         }
     }
 
+    // ------------------------------------------------------------ debug read-out
+
+#if UNITY_EDITOR
+    private float nextPathReport;
+#endif
+
+    // Editor only: shows in the Inspector which camera path is running (0 normal cameras, 1 Pixel Perfect composite, 2 diagonal).
+    private void ReportPath(int path)
+    {
+#if UNITY_EDITOR
+        if (Time.unscaledTime < nextPathReport) return;
+        nextPathReport = Time.unscaledTime + 0.25f;
+
+        string label = path == 2 ? "Diagonal compositor (Dynamic Adaptive, DynamicScreenCamera.Tick)"
+                     : path == 1 ? "Pixel Perfect composite, straight halves (DynamicScreenCamera.TickPixelPerfect)"
+                     : "Normal cameras, straight split (SplitScreenCamera, Camera.rect)";
+
+        activePath = label + "\nMode: " + mode + "   Keep Sides Fixed in effect: " + SidesFixed +
+                     "   Pixel Perfect Camera found: " + UsesPixelPerfectCamera;
+        if (path == 1 && dynamicCamera != null) activePath += "\n" + dynamicCamera.DebugState;
+#endif
+    }
+
     // ------------------------------------------------------------ main loop
 
     private void LateUpdate()
@@ -395,6 +422,7 @@ public class SplitScreenCamera : MonoBehaviour
         // compositing keeps each Pixel Perfect Camera full-screen and masks the result into the halves.
         bool useDynamic = WantsDynamic();
         bool usePixelPerfectComposite = UsesPixelPerfectCamera && !useDynamic;
+        ReportPath(useDynamic ? 2 : (usePixelPerfectComposite ? 1 : 0));
 
         // If changing compositor modes (or returning to ordinary cameras), release the prior render
         // textures and reset camera state before the next path takes ownership.

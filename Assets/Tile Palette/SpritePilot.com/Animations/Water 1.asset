@@ -13,14 +13,20 @@ MonoBehaviour:
   m_Name: Water 1
   m_EditorClassIdentifier: Unity.2D.Tilemap.Extras::UnityEngine.Tilemaps.AnimatedTile
   m_AnimatedSprites:
-  - {fileID: 2902812135754393473, guid: 50f061d78e2574b4e8cbc1e3ede28ab7, type: 3}
-  - {fileID: 341697889, guid: 50f061d78e2574b4e8cbc1e3ede28ab7, type: 3}
-  - {fileID: 844405591, guid: 50f061d78e2574b4e8cbc1e3ede28ab7, type: 3}
-  - {fileID: -412763372, guid: 50f061d78e2574b4e8cbc1e3ede28ab7, type: 3}
-  - {fileID: -192454053, guid: 50f061d78e2574b4e8cbc1e3ede28ab7, type: 3}
-  - {fileID: -187039538, guid: 50f061d78e2574b4e8cbc1e3ede28ab7, type: 3}
-  - {fileID: -86720837, guid: 50f061d78e2574b4e8cbc1e3ede28ab7, type: 3}
-  - {fileID: 525741602, guid: 50f061d78e2574b4e8cbc1e3ede28ab7, type: 3}
+  - {fileID: -5278356071157534689, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: -5278356071157534689, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: -5278356071157534689, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: -5278356071157534689, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: 138043921, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: 2011356807, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: -1328084086, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: 1061493263, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: -1624526947, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: 300514033, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: 300514033, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: -1328084086, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: -1020222912, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
+  - {fileID: -5278356071157534689, guid: 954ed1680cc885e4b8300cb34c545e14, type: 3}
   m_MinSpeed: 8
   m_MaxSpeed: 8
   m_AnimationStartTime: 0
