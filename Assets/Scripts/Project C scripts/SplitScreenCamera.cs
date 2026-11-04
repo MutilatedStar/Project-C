@@ -11,6 +11,8 @@ using Ilumisoft.HealthSystem;
 /// Four modes (pick one in the Inspector, or change it while playing, or tap the optional on-screen button):
 ///   Horizontal  the dividing line runs left-right: Player 1 on the TOP half, Player 2 on the BOTTOM half
 ///   Vertical    the dividing line runs up-down: Player 1 on the LEFT half, Player 2 on the RIGHT half
+///               (Horizontal and Vertical keep each player on their own half by default. Turn off "Keep Sides Fixed" and
+///               they go by position instead, like Adaptive: the player further left / higher up gets the left / top half.)
 ///   Adaptive    one screen while the players are close. When they get far apart the screen splits, along whichever
 ///               direction they are further apart in, and the player who is further left (or higher up) gets the
 ///               left (or top) screen. The dividing line slides in and out instead of popping.
@@ -52,12 +54,15 @@ public class SplitScreenCamera : MonoBehaviour
 
     [Header("Mode")]
     public SplitMode mode = SplitMode.Adaptive;
+    [Tooltip("Horizontal and Vertical only (Adaptive always goes by position, so this has no effect on it). ON: each player keeps their own half, Player 1 on the left / top and Player 2 on the right / bottom, however they move, so the views never swap when the players pass each other. OFF: the player who is further left (or higher up) gets the left (or top) half, and the halves swap when they cross.")]
+    public bool staticSides = true;
     [Tooltip("Optional on-screen button that cycles through the modes (tapped by code, leave OnClick empty).")]
     public DirectButton modeButton = new DirectButton();
     [Tooltip("Adaptive mode only. ON: the split is a slanted line that turns with the players (drawn by DynamicScreenCamera, which is added automatically; orthographic cameras only). OFF: the straight horizontal / vertical split.")]
     public bool dynamicAdaptive = false;
-    [Tooltip("The DynamicScreenCamera to use. Empty = the one on this object, or one is added when Dynamic Adaptive is first on. Switching that component off falls back to the straight split.")]
-    public DynamicScreenCamera dynamicCamera;
+    // No longer shown in the Inspector: it never needed linking. The DynamicScreenCamera on this object is found, or added
+    // when it is first needed (see GetDynamicCamera). Switching that component off falls back to the straight split.
+    [HideInInspector] public DynamicScreenCamera dynamicCamera;
     [Tooltip("Optional on-screen button that switches Dynamic Adaptive on and off (tapped by code, leave OnClick empty).")]
     public DirectButton dynamicButton = new DirectButton();
 
@@ -103,6 +108,15 @@ public class SplitScreenCamera : MonoBehaviour
             if (dynamicRunning && dynamicCamera != null) return dynamicCamera.IsSplit;
             return camera2 != null && camera2.enabled;
         }
+    }
+
+    /// <summary>
+    /// True when each player keeps their own half no matter where they are: Horizontal or Vertical with Keep Sides Fixed
+    /// on (the default). Adaptive is never fixed, because it goes by position. DynamicScreenCamera should read this too.
+    /// </summary>
+    public bool SidesFixed
+    {
+        get { return staticSides && (mode == SplitMode.Horizontal || mode == SplitMode.Vertical); }
     }
 
     /// <summary>The split screen in the scene (found by CoopHealthbarLayout), or null.</summary>
@@ -225,13 +239,22 @@ public class SplitScreenCamera : MonoBehaviour
 
     private const float MinSize = 0.01f;   // a view thinner than this (of the screen) is switched off
 
+    // The slide never goes slower than Transition Speed x this, in screens per second (8 x 0.2 = 1.6 screens/s by default).
+    private const float MinSlideFraction = 0.2f;
+
+    // Keep Sides Fixed OFF: how far past the other player (as a fraction of the screen's width or height) someone must go
+    // before the two halves swap.
+    private const float SwapMargin = 0.1f;
+
     private static readonly Rect FullRect = new Rect(0f, 0f, 1f, 1f);
 
     private Rect rect1 = new Rect(0f, 0f, 1f, 1f);
     private Rect rect2 = new Rect(1f, 0f, 0f, 1f);   // Camera 2 starts parked, thin, at the right edge
     private float mergeBlend = 1f;                   // 1 = both cameras look at the same spot, 0 = each at its own player
 
-    private bool adaptiveMerged = true;
+    private bool adaptiveMerged = true;              // Adaptive: what the screen is heading for (true = one screen)
+    private bool wantSplit;                          // Adaptive: the players are far enough apart for two views
+    private bool layoutChanging;                     // closing the old split so it can reopen the other way round (Adaptive, and Horizontal / Vertical when sides swap)
     private bool vertical = true;                    // true: side by side. false: one above the other
     private bool cam1First = true;                   // Camera 1 is on the left (side by side) or on top (stacked)
 
@@ -386,8 +409,7 @@ public class SplitScreenCamera : MonoBehaviour
             bool entering = !dynamicRunning;
             dynamicRunning = true;
             pixelPerfectCompositeRunning = usePixelPerfectComposite;
-            if (dynamicCamera == null) dynamicCamera = GetComponent<DynamicScreenCamera>();
-            if (dynamicCamera == null) dynamicCamera = gameObject.AddComponent<DynamicScreenCamera>();
+            GetDynamicCamera();
 
             if (useDynamic)
             {
@@ -407,27 +429,19 @@ public class SplitScreenCamera : MonoBehaviour
         switch (mode)
         {
             case SplitMode.Horizontal:
-                vertical = false;
-                cam1First = true;
-                merged = !both;
-                adaptiveMerged = true;
-                break;
-
             case SplitMode.Vertical:
-                vertical = true;
-                cam1First = true;
-                merged = !both;
-                adaptiveMerged = true;
+                ResetAdaptive();
+                merged = UpdateFixedSplit(mode == SplitMode.Vertical, both, p1, p2);
                 break;
 
             case SplitMode.Retro:
                 merged = true;
-                adaptiveMerged = true;
+                ResetAdaptive();
                 break;
 
             default:   // Adaptive
                 if (both) UpdateAdaptive(p1, p2);
-                else adaptiveMerged = true;   // when Player 2 joins, start from one screen
+                else ResetAdaptive();   // when Player 2 joins, start from one screen
                 merged = adaptiveMerged;
                 break;
         }
@@ -442,11 +456,14 @@ public class SplitScreenCamera : MonoBehaviour
 
         LayoutTargets(merged, out target1, out target2);
 
-        float k = snap ? 1f : 1f - Mathf.Exp(-transitionSpeed * Time.unscaledDeltaTime);
-        rect1 = LerpRect(rect1, target1, k);
-        rect2 = LerpRect(rect2, target2, k);
-        mergeBlend = Mathf.Lerp(mergeBlend, merged ? 1f : 0f, k);
-        if (Mathf.Abs(mergeBlend - (merged ? 1f : 0f)) < 0.002f) mergeBlend = merged ? 1f : 0f;
+        // Eases out like before, but never slower than minStep, so the last bit of the slide can't crawl and the
+        // dividing line is really gone a moment after the players come together (not after a long fade-out tail).
+        float dt = Time.unscaledDeltaTime;
+        float k = snap ? 1f : 1f - Mathf.Exp(-transitionSpeed * dt);
+        float minStep = snap ? 1f : transitionSpeed * MinSlideFraction * dt;
+        rect1 = SlideRect(rect1, target1, k, minStep);
+        rect2 = SlideRect(rect2, target2, k, minStep);
+        mergeBlend = Slide(mergeBlend, merged ? 1f : 0f, k, minStep);
 
         // ---- 3. Where does each camera look?
         Vector3 own1 = has1 ? p1 : p2;   // Camera 1 follows Player 1, or Player 2 if Player 1 is gone
@@ -460,7 +477,7 @@ public class SplitScreenCamera : MonoBehaviour
 
         ApplyCamera(camera1, rect1, focus1, snap);
 
-        bool show2 = rect2.width > MinSize && rect2.height > MinSize;
+        bool show2 = SplitOnScreen();
         if (show2 && camera2 == null) CreateCamera2();
         if (camera2 != null)
         {
@@ -480,10 +497,15 @@ public class SplitScreenCamera : MonoBehaviour
     {
         if (mode != SplitMode.Adaptive || !dynamicAdaptive || !camera1.orthographic) return false;
 
+        return GetDynamicCamera().isActiveAndEnabled;   // switching that component off falls back to the straight split
+    }
+
+    // The DynamicScreenCamera on this object, added the first time it is needed. Nothing has to be linked by hand.
+    private DynamicScreenCamera GetDynamicCamera()
+    {
         if (dynamicCamera == null) dynamicCamera = GetComponent<DynamicScreenCamera>();
         if (dynamicCamera == null) dynamicCamera = gameObject.AddComponent<DynamicScreenCamera>();
-
-        return dynamicCamera.isActiveAndEnabled;   // switching that component off falls back to the straight split
+        return dynamicCamera;
     }
 
     // Back to the ordinary viewport-rect split: start from one clean full screen, with no slide.
@@ -497,7 +519,7 @@ public class SplitScreenCamera : MonoBehaviour
         rect1 = FullRect;
         rect2 = new Rect(1f, 0f, 0f, 1f);
         mergeBlend = 1f;
-        adaptiveMerged = true;
+        ResetAdaptive();
         snapNextFrame = true;
     }
 
@@ -750,28 +772,118 @@ public class SplitScreenCamera : MonoBehaviour
         float sepY = Mathf.Abs(p1.y - p2.y) / viewH;
         float sep = Mathf.Max(sepX, sepY);
 
-        bool wasMerged = adaptiveMerged;
+        // 1. Far enough apart for two views? Split at Split Distance, join at Merge Distance (the gap between the two
+        //    stops it flickering at the edge).
         float mergeAt = Mathf.Min(mergeDistance, splitDistance);
-
-        if (adaptiveMerged)
+        if (wantSplit)
         {
-            if (sep > splitDistance) adaptiveMerged = false;
+            if (sep < mergeAt) wantSplit = false;
         }
-        else if (sep < mergeAt)
+        else if (sep > splitDistance)
+        {
+            wantSplit = true;
+        }
+
+        if (!wantSplit)
         {
             adaptiveMerged = true;
+            layoutChanging = false;
+            return;
         }
 
-        // Direction and sides only change while split (or at the moment it opens), so a closed screen never twitches.
-        if (!adaptiveMerged)
+        // 2. Which layout do the players want? While no split is on screen it is a free choice (along the bigger gap).
+        //    Once one is showing, it only turns 90 degrees when the other gap is clearly bigger (Flip Bias).
+        bool onScreen = SplitOnScreen();
+        bool wantVertical;
+        if (!onScreen) wantVertical = sepX >= sepY;
+        else if (vertical) wantVertical = !(sepY > sepX * flipBias);
+        else wantVertical = sepX > sepY * flipBias;
+
+        // Side by side: the one further left takes the left. Stacked: the one higher up takes the top.
+        bool wantFirst = wantVertical ? p1.x <= p2.x : p1.y >= p2.y;
+
+        // 3. Apply it. A split that is showing is never morphed into a different one: the old views would sweep across
+        //    each other (this was the "freak out" when two players pass each other). It closes first, and reopens the
+        //    new way round once it is gone. Nothing changes while a split is showing the way the players still want.
+        if (!onScreen)
         {
-            if (wasMerged) vertical = sepX >= sepY;                 // opening: split along the bigger gap
-            else if (vertical && sepY > sepX * flipBias) vertical = false;
-            else if (!vertical && sepX > sepY * flipBias) vertical = true;
-
-            // Side by side: the one further left takes the left. Stacked: the one higher up takes the top.
-            cam1First = vertical ? p1.x <= p2.x : p1.y >= p2.y;
+            vertical = wantVertical;
+            cam1First = wantFirst;
+            layoutChanging = false;
         }
+        else
+        {
+            layoutChanging = (wantVertical != vertical) || (wantFirst != cam1First);
+        }
+
+        adaptiveMerged = layoutChanging;
+    }
+
+    // One screen, and forget everything the adaptive split was doing.
+    private void ResetAdaptive()
+    {
+        adaptiveMerged = true;
+        wantSplit = false;
+        layoutChanging = false;
+    }
+
+    // True while the second view is visible at all, including while it is still sliding open or closed.
+    private bool SplitOnScreen()
+    {
+        return rect2.width > MinSize && rect2.height > MinSize;
+    }
+
+    // Horizontal / Vertical: two views for as long as both players are in. Who gets which half depends on Keep Sides Fixed.
+    // Returns true when the screen should be heading for ONE view: a player is missing, or the split is closing so that it
+    // can reopen the other way round (same close-and-reopen as Adaptive, so the two views never sweep across each other).
+    private bool UpdateFixedSplit(bool wantVertical, bool both, Vector3 p1, Vector3 p2)
+    {
+        bool onScreen = SplitOnScreen();
+
+        // Which half does Player 1 take? With Keep Sides Fixed on, always the left / top one, wherever the players are.
+        bool wantFirst = true;
+        if (!staticSides && both)
+        {
+            float viewH = FullHalfHeight() * 2f;
+            float viewW = viewH * ((float)Screen.width / Mathf.Max(1, Screen.height));
+
+            if (!onScreen || wantVertical != vertical)
+            {
+                // A fresh split, or a new direction: straight to whoever is further left / higher up.
+                wantFirst = wantVertical ? p1.x <= p2.x : p1.y >= p2.y;
+            }
+            else
+            {
+                // A split is showing: keep the halves as they are until someone has clearly crossed over, so two players
+                // walking side by side don't make the halves flutter back and forth.
+                wantFirst = cam1First;
+                if (wantVertical)
+                {
+                    float margin = SwapMargin * viewW;
+                    if (cam1First && p1.x > p2.x + margin) wantFirst = false;
+                    else if (!cam1First && p1.x < p2.x - margin) wantFirst = true;
+                }
+                else
+                {
+                    float margin = SwapMargin * viewH;
+                    if (cam1First && p1.y < p2.y - margin) wantFirst = false;
+                    else if (!cam1First && p1.y > p2.y + margin) wantFirst = true;
+                }
+            }
+        }
+
+        if (!onScreen)
+        {
+            vertical = wantVertical;
+            cam1First = wantFirst;
+            layoutChanging = false;
+        }
+        else
+        {
+            layoutChanging = (wantVertical != vertical) || (wantFirst != cam1First);
+        }
+
+        return !both || layoutChanging;
     }
 
     // ------------------------------------------------------------ layout
@@ -808,18 +920,22 @@ public class SplitScreenCamera : MonoBehaviour
         }
     }
 
-    private static Rect LerpRect(Rect from, Rect to, float k)
+    private static Rect SlideRect(Rect from, Rect to, float k, float minStep)
     {
-        float x = Mathf.Lerp(from.x, to.x, k);
-        float y = Mathf.Lerp(from.y, to.y, k);
-        float w = Mathf.Lerp(from.width, to.width, k);
-        float h = Mathf.Lerp(from.height, to.height, k);
+        return new Rect(
+            Slide(from.x, to.x, k, minStep),
+            Slide(from.y, to.y, k, minStep),
+            Slide(from.width, to.width, k, minStep),
+            Slide(from.height, to.height, k, minStep));
+    }
 
-        // Close enough: finish the slide exactly.
-        if (Mathf.Abs(x - to.x) < 0.002f && Mathf.Abs(y - to.y) < 0.002f &&
-            Mathf.Abs(w - to.width) < 0.002f && Mathf.Abs(h - to.height) < 0.002f) return to;
-
-        return new Rect(x, y, w, h);
+    // Moves a value towards its target by the larger of two steps: the usual ease-out step (k of the way) or minStep.
+    // The ease-out gives the quick start; minStep stops the end from slowing to a crawl, and MoveTowards lands exactly
+    // on the target instead of creeping up on it.
+    private static float Slide(float current, float target, float k, float minStep)
+    {
+        float easeStep = Mathf.Abs(target - current) * k;
+        return Mathf.MoveTowards(current, target, Mathf.Max(easeStep, minStep));
     }
 
     // ------------------------------------------------------------ cameras

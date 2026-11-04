@@ -443,9 +443,9 @@ TextureImporter:
       name: 0x72_16x16DungeonTileset.v5_9
       rect:
         serializedVersion: 2
-        x: 352
+        x: 367
         y: 208
-        width: 64
+        width: 34
         height: 32
       alignment: 0
       pivot: {x: 0.5, y: 0.5}

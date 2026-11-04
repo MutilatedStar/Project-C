@@ -53,6 +53,9 @@ TagManager:
   - name: Layer 4
     uniqueID: 3934217377
     locked: 0
+  - name: Layer 5
+    uniqueID: 714069359
+    locked: 0
   m_RenderingLayers:
   - Default
   m_MigratedRenderPipelines: []
