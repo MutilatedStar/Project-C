@@ -36,10 +36,45 @@ public class CoopHealthbarBinder : CoopHudPanel
     /// <summary>True while the bar is showing (that player is in the game).</summary>
     public override bool IsShown { get { return healthbar != null && healthbar.gameObject.activeSelf; } }
 
+    /// <summary>Why the bar is hidden: it only shows for a player that has a CoopHealth and counts.</summary>
+    public override string HiddenReason
+    {
+        get
+        {
+            CoopHealth player = CoopHealth.Get(playerNumber);
+            if (player == null)
+            {
+                string found = "";
+                for (int i = 0; i < CoopHealth.Players.Count; i++)
+                {
+                    found += (i > 0 ? ", " : "") + "Player " + CoopHealth.Players[i].PlayerNumber;
+                }
+
+                return "no CoopHealth with Player Number " + playerNumber + " is in the game. CoopHealth components found: " +
+                       (CoopHealth.Players.Count == 0 ? "none" : found) +
+                       ". The player prefab needs CoopHealth (not the plain Health component), and its PlayerInputSource Player Number must match.";
+            }
+
+            if (!CoopRules.Counts(playerNumber))
+            {
+                return "CoopRules says Player " + playerNumber + " does not count right now (Single Player Mode is on for the other player, " +
+                       "or Player 2 is switched off in LocalCoopManager).";
+            }
+
+            return "shown normally";
+        }
+    }
+
     // The bar's own rectangle is its size, unless a Footprint is set. (Leave Footprint empty: if the bar's rectangle turns out to be
     // stretched across the screen, the pictures and text drawn inside the bar are measured instead.)
     protected override RectTransform DefaultFootprint { get { return healthbar != null ? healthbar.transform as RectTransform : null; } }
     protected override Transform MeasureRoot { get { return healthbar != null ? healthbar.transform : transform; } }
+
+    // The layout moves the bar itself when it is not inside this object, so it can't be left behind.
+    public override Transform SlotTransform
+    {
+        get { return (healthbar != null && !healthbar.transform.IsChildOf(transform)) ? healthbar.transform : transform; }
+    }
 
     /// <summary>The binder for this player number, or null.</summary>
     public static CoopHealthbarBinder Get(int playerNumber)

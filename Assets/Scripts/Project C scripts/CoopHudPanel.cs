@@ -54,6 +54,15 @@ public abstract class CoopHudPanel : MonoBehaviour
     /// <summary>True while the panel is on screen (its player is in the game). Hidden panels are left where they are.</summary>
     public abstract bool IsShown { get; }
 
+    /// <summary>Why the panel is hidden right now, in plain words (shown in the layout's Inspector read-out).</summary>
+    public virtual string HiddenReason { get { return ""; } }
+
+    /// <summary>
+    /// The object the layout moves to place this panel. Normally the panel itself. A bar that sits OUTSIDE its panel's object is
+    /// moved directly instead, so it can't be left behind while the layout keeps pushing an empty object around.
+    /// </summary>
+    public virtual Transform SlotTransform { get { return transform; } }
+
     /// <summary>The rectangle to use when no Footprint is set.</summary>
     protected virtual RectTransform DefaultFootprint { get { return transform as RectTransform; } }
 
@@ -88,6 +97,15 @@ public abstract class CoopHudPanel : MonoBehaviour
         RectTransform rect = Footprint;
         if (rect == null)
         {
+            // Nothing to take a size from (a bar whose root is not a UI rectangle): measure what is drawn.
+            Vector2 drawnMin, drawnMax;
+            if (MeasureDrawn(out drawnMin, out drawnMax))
+            {
+                centre = (drawnMin + drawnMax) * 0.5f;
+                half = (drawnMax - drawnMin) * 0.5f;
+                return;
+            }
+
             Vector3 p = transform.position;
             centre = new Vector2(p.x, p.y);
             half = Vector2.zero;
@@ -97,8 +115,10 @@ public abstract class CoopHudPanel : MonoBehaviour
         Vector2 min, max;
         RectBounds(rect, out min, out max);
 
-        // Nothing assigned and the rectangle is clearly not a bar: measure what is actually drawn inside it.
-        if (footprint == null && IsHuge(max - min))
+        // Nothing assigned and the rectangle can't be trusted as the bar's size: measure what is actually drawn inside it.
+        // That is the case when it is huge, when it is tiny, and when it belongs to a Canvas (a bar prefab that carries its own
+        // Canvas has a rectangle that Unity controls, which has nothing to do with how big the bar looks).
+        if (footprint == null && (IsHuge(max - min) || IsTiny(max - min) || rect.GetComponent<Canvas>() != null))
         {
             Vector2 drawnMin, drawnMax;
             if (MeasureDrawn(out drawnMin, out drawnMax))
@@ -107,12 +127,12 @@ public abstract class CoopHudPanel : MonoBehaviour
                 max = drawnMax;
             }
 
-            if (IsHuge(max - min) && !warnedHuge)
+            if ((IsHuge(max - min) || IsTiny(max - min)) && !warnedHuge)
             {
                 warnedHuge = true;
-                Debug.LogWarning(name + " (Player " + playerNumber + "): this panel's rectangle is " + Mathf.RoundToInt(max.x - min.x) + " x " +
-                                 Mathf.RoundToInt(max.y - min.y) + " pixels, which is most of the screen, so it can't be kept in its corner. " +
-                                 "Shrink the bar's Rect Transform, or drag the bar's background image into Footprint.", this);
+                Debug.LogWarning(name + " (Player " + playerNumber + "): this panel's size came out as " + Mathf.RoundToInt(max.x - min.x) + " x " +
+                                 Mathf.RoundToInt(max.y - min.y) + " pixels, which can't be right for a bar, so it can't be kept in its corner. " +
+                                 "Drag the bar's Background image (the picture that is as big as the bar looks) into Footprint.", this);
             }
         }
 
@@ -123,6 +143,11 @@ public abstract class CoopHudPanel : MonoBehaviour
     private static bool IsHuge(Vector2 size)
     {
         return size.x > Screen.width * HugeFraction || size.y > Screen.height * HugeFraction;
+    }
+
+    private static bool IsTiny(Vector2 size)
+    {
+        return size.x < 8f || size.y < 8f;
     }
 
     private static void RectBounds(RectTransform rect, out Vector2 min, out Vector2 max)
@@ -224,6 +249,28 @@ public abstract class CoopHudPanel : MonoBehaviour
         }
 
         int compositeOrder = rig != null ? rig.CompositeCanvasSortingOrder : DynamicScreenCamera.DefaultCanvasSortingOrder;
+
+        // A bar prefab that carries its own Canvas can override its sorting and so sit under the picture even when the HUD canvas doesn't.
+        Canvas[] inner = GetComponentsInChildren<Canvas>(true);
+        for (int i = 0; i < inner.Length; i++)
+        {
+            Canvas c = inner[i];
+            if (c == root || !c.overrideSorting || c.sortingOrder > compositeOrder) continue;
+
+            if (fixCanvasAutomatically)
+            {
+                Debug.Log(name + " (Player " + playerNumber + "): the canvas on '" + c.name + "' overrides its sorting at " + c.sortingOrder +
+                          ", at or below the split-screen picture (" + compositeOrder + "). It was raised to " + (compositeOrder + 1) +
+                          " while the game runs. Raise it in the prefab to keep this.", this);
+                c.sortingOrder = compositeOrder + 1;
+            }
+            else
+            {
+                Debug.LogWarning(name + " (Player " + playerNumber + "): the canvas on '" + c.name + "' overrides its sorting at " + c.sortingOrder +
+                                 ", at or below the split-screen picture (" + compositeOrder + "), so the picture covers it. Raise its Order in Layer.", this);
+            }
+        }
+
         if (root.sortingOrder <= compositeOrder)
         {
             if (fixCanvasAutomatically)

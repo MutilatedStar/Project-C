@@ -46,6 +46,26 @@ public class CoopInventoryPanel : CoopHudPanel
     /// <summary>True while the bar is showing (that player is in the game).</summary>
     public override bool IsShown { get { return content != null && content.activeSelf; } }
 
+    /// <summary>Why the bar is hidden: it only shows for a player that has a SwordController and counts.</summary>
+    public override string HiddenReason
+    {
+        get
+        {
+            if (SwordController.Get(playerNumber) == null)
+            {
+                return "no SwordController for Player " + playerNumber + " is in the game (the player prefab needs one, with the matching Player Number).";
+            }
+
+            if (!CoopRules.Counts(playerNumber))
+            {
+                return "CoopRules says Player " + playerNumber + " does not count right now (Single Player Mode is on for the other player, " +
+                       "or Player 2 is switched off in LocalCoopManager).";
+            }
+
+            return "shown normally";
+        }
+    }
+
     private class Slot
     {
         public GameObject root;
@@ -78,7 +98,8 @@ public class CoopInventoryPanel : CoopHudPanel
         panelRect = transform as RectTransform;
         if (panelRect == null)
         {
-            Debug.LogError("CoopInventoryPanel on '" + name + "': put it on an object inside a Canvas (it needs a Rect Transform). This script is switched off.", this);
+            Debug.LogError("CoopInventoryPanel on '" + name + "': this object is not a UI object, so the bar can't be drawn (it needs a Rect Transform inside a Canvas). " +
+                           "Fix: drag this object onto your HUD Canvas in the Hierarchy. Unity turns it into a UI object by itself. This script is switched off until you do.", this);
             enabled = false;
         }
     }

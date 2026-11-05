@@ -85,6 +85,7 @@ public abstract class CoopHudLayout : MonoBehaviour
         public Vector2 size;           // how big it measured
         public Vector2 target;         // where it is being sent
         public bool hasTarget;
+        public bool hiddenNow;
     }
 
     private readonly BarState[] states = { new BarState(), new BarState() };
@@ -149,6 +150,7 @@ public abstract class CoopHudLayout : MonoBehaviour
         {
             BarState st = states[i];
             status += "\nPlayer " + (i + 1) + ": " + st.note;
+            if (st.hiddenNow && st.bar != null) status += "\n    why: " + st.bar.HiddenReason;
             if (st.hasTarget) status += "\n    panel at " + st.centre + "  size " + st.size + "  sent to " + st.target;
         }
 #endif
@@ -176,6 +178,7 @@ public abstract class CoopHudLayout : MonoBehaviour
             st.settledFree = false;
         }
         st.hasTarget = false;
+        st.hiddenNow = false;
         if (bar == null)
         {
             st.note = "NO PANEL found with this Player Number (" + Group + " family)";
@@ -196,7 +199,7 @@ public abstract class CoopHudLayout : MonoBehaviour
             return;
         }
 
-        Transform slot = bar.transform;
+        Transform slot = bar.SlotTransform;
         Vector2 centre, half;
         GetFootprint(bar, out centre, out half);
 
@@ -213,7 +216,8 @@ public abstract class CoopHudLayout : MonoBehaviour
         st.wasShown = shown;
         if (!shown)
         {
-            st.note = "panel found, but it is hidden (that player is not in the game, or does not count)";
+            st.note = "panel found, but it is hidden";
+            st.hiddenNow = true;
             return;
         }
 
