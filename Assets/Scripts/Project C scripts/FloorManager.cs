@@ -4,17 +4,17 @@ using UnityEngine.Tilemaps;
 using Ilumisoft.HealthSystem;
 
 /// <summary>
-/// The foe side of the floor system. FloorController owns the floor NUMBER (stairs menu, Shop trip, black screen,
+/// The foe side of the floor system. FloorController owns the floor NUMBER (doors, Shop trip, black screen,
 /// teleport); this script FOLLOWS it:
 ///
-///   FloorController.FloorChanged fires (player already moved, screen still black)
+///   FloorController.FloorChanged fires (players already moved, screen still black)
 ///        ->  FoeSpawner.StartLevel(floor - 1)  ->  foes of the new floor start spawning once the screen fades out.
 ///
-/// So the stairs button AND the Shop button both end up here, and the spawner always matches the floor. After a trip to
+/// So a door AND the Shop both end up here, and the spawner always matches the floor. After a trip to
 /// the Shop the scene reloads; Start() then begins the spawner on the floor FloorController remembers (not on floor 1).
 ///
 ///   GoDownFloor()  ->  asks FloorController to run the full "go down" (black screen, teleport, new foes), so any script
-///                      can send the player down without the stairs menu.
+///                      can send the players down without a door.
 ///
 /// It also decides where foes are allowed to be, using ONE rule (IsValidFoePosition) in two places:
 ///
@@ -32,8 +32,15 @@ using Ilumisoft.HealthSystem;
 /// first entry in FoeSpawner's "levels" list. Past the last entry the spawner reuses the last list.
 /// The floor a run STARTS on is FloorController's "Starting Floor" field.
 ///
-/// Going down also HEALS the player (Heal On Descent, 10% of max health by default) and the run has an END: when the floor
+/// Going down also HEALS every player that counts (Heal On Descent, 10% of max health by default) and the run has an END: when the floor
 /// number goes past "Last Floor", no new floor is built and EndScreens loads the Ending scene instead.
+///
+/// HAZARD TILES: it also reads the tile under each player, by player NUMBER, and hurts them:
+///   lava    hurts the players listed in "Lava Hurts" (Player 1, blue, by default); any tile with "lava" in its name
+///   water   hurts the players listed in "Water Hurts" (Player 2, orange, by default); any tile with "water" in its name
+///   spikes  hurt EVERY player, massively, but only while the spike tile shows a frame that is not in "Safe Spike Frames"
+///           (frames 0 and 1 by default, so only spike-trap-16px_strip8_2 to _7 hurt). Players are hurt through
+///           CoopHealth.ApplyDamage, so Invincible and the CoopRules (Shared Damage, Single Player Mode) still apply.
 ///
 /// Put this on an empty object and drag the FoeSpawner into "spawner". The spawner's "Auto Start" box is now ignored
 /// (this script starts the right level itself), so it no longer matters whether it is ticked.
@@ -67,12 +74,50 @@ public class FloorManager : MonoBehaviour
     [SerializeField] private LayerMask floorMask = 0;
 
     [Header("Going down: healing and the last floor")]
-    [Tooltip("The final floor of the run. Going down from it (stairs) ends the run (Ending scene) instead of building another floor.")]
+    [Tooltip("The final floor of the run. Going down from it (a door) ends the run (Ending scene) instead of building another floor.")]
     [SerializeField, Min(1)] private int lastFloor = 4;
-    [Tooltip("Fraction of the player's MAX health restored each time the floor number goes up. 0.1 = 10%. 0 = no healing.")]
+    [Tooltip("Fraction of each player's MAX health restored each time the floor number goes up. 0.1 = 10%. 0 = no healing.")]
     [SerializeField, Range(0f, 1f)] private float healOnDescent = 0.1f;
     [Tooltip("Leave empty to find the EndScreens in the scene. It loads the Ending scene on a win (and the Failure Ending scene when health hits zero).")]
     [SerializeField] private EndScreens endScreens;
+
+    [Header("Hazard tiles (lava, water, spikes)")]
+    [Tooltip("Master switch for lava, water and spikes.")]
+    [SerializeField] private bool hazardsEnabled = true;
+    [Tooltip("Tilemaps to check for hazard tiles. Leave EMPTY to check every Tilemap in the scene (re-checked once a second).")]
+    [SerializeField] private Tilemap[] hazardTilemaps;
+    [Tooltip("Where on each player the tile is read, as an offset from the middle of that player's collider (world units). Nudge this until it sits at their feet.")]
+    [SerializeField] private Vector2 hazardCheckOffset = Vector2.zero;
+    [Tooltip("Seconds between damage ticks while a player stands in lava or water they are hurt by. The first tick is the moment they step in.")]
+    [SerializeField, Min(0.05f)] private float hazardTickSeconds = 0.5f;
+    [Tooltip("Prints a Console line every time a hazard hurts a player, with the tile and sprite names, so a wrong hit can be traced.")]
+    [SerializeField] private bool logHazards = true;
+
+    [Header("Lava")]
+    [Tooltip("A tile counts as lava when its name (tile asset OR sprite) contains this. Capitals, spaces, dashes and underscores don't matter, so \"lava\" covers lava-16px_strip12_0 to _11.")]
+    [SerializeField] private string lavaName = "lava";
+    [Tooltip("Which players lava hurts. Player 1 (blue) by default. Add 3 or 4 if you want them hurt too.")]
+    [SerializeField] private int[] lavaHurts = { 1 };
+    [Tooltip("Damage per tick.")]
+    [SerializeField, Min(0f)] private float lavaDamage = 5f;
+
+    [Header("Water")]
+    [Tooltip("A tile counts as water when its name (tile asset OR sprite) contains this, so \"water\" covers water-16px_strip8_0 to _7.")]
+    [SerializeField] private string waterName = "water";
+    [Tooltip("Which players water hurts. Player 2 (orange) by default. Add 3 or 4 if you want them hurt too.")]
+    [SerializeField] private int[] waterHurts = { 2 };
+    [Tooltip("Damage per tick.")]
+    [SerializeField, Min(0f)] private float waterDamage = 5f;
+
+    [Header("Spikes (hurt every player)")]
+    [Tooltip("A tile counts as a spike trap when its name contains this.")]
+    [SerializeField] private string spikeName = "spike-trap";
+    [Tooltip("Spike frames that do NOTHING: the number at the end of the sprite name (spike-trap-16px_strip8_0 is frame 0). Every other frame hurts. Default 0 and 1 are the harmless ones.")]
+    [SerializeField] private int[] safeSpikeFrames = { 0, 1 };
+    [Tooltip("Damage of one spike hit. Make it as big as or bigger than the players' max health for an instant kill.")]
+    [SerializeField, Min(0f)] private float spikeDamage = 100f;
+    [Tooltip("After a spike hits a player it can't hit that same player again for this long, so one trap going off doesn't hit once per frame of its animation.")]
+    [SerializeField, Min(0f)] private float spikeCooldown = 1f;
 
     [Header("Stray foe check")]
     [Tooltip("Turn the removal of foes that are somewhere invalid on or off. (The spawn-time check stays active either way.)")]
@@ -93,6 +138,14 @@ public class FloorManager : MonoBehaviour
     private bool warnedNoFloor;
     private FloorController floorController;
     private int handledFloor;   // the floor the spawner was last started for (0 = none yet), so one floor never starts twice
+
+    private const int MaxPlayers = 4;
+    private readonly float[] nextTickTime = new float[MaxPlayers + 1];    // per player number: when lava / water may hurt them next
+    private readonly float[] nextSpikeTime = new float[MaxPlayers + 1];   // per player number: when a spike may hurt them next
+    private readonly Collider2D[] playerColliders = new Collider2D[MaxPlayers + 1];
+    private readonly CoopHealth[] playerColliderOwners = new CoopHealth[MaxPlayers + 1];
+    private Tilemap[] autoHazardMaps;
+    private float nextHazardMapRefresh;
 
     // ------------------------------------------------------------ setup
 
@@ -123,7 +176,7 @@ public class FloorManager : MonoBehaviour
         // Begin on the floor FloorController says we are on. Fresh run = Starting Floor; back from the Shop = the floor after it.
         ApplyFloor(CurrentFloor);
 
-        // From now on, every floor change (stairs button, Shop return, GoDownFloor()) comes through here.
+        // From now on, every floor change (a door, Shop return, GoDownFloor()) comes through here.
         FloorController.FloorChanged += ApplyFloor;
     }
 
@@ -167,7 +220,7 @@ public class FloorManager : MonoBehaviour
 
         // Healing only on a real step down. The first call of a scene (a fresh start, or back from the Shop) has no
         // previous floor, so it never heals.
-        if (previousFloor > 0 && floor > previousFloor) HealPlayer(healOnDescent);
+        if (previousFloor > 0 && floor > previousFloor) HealPlayers(healOnDescent);
 
         if (spawner != null) spawner.StartLevel(floor - 1);   // StartLevel also clears any foe still left from the last floor
 
@@ -179,7 +232,7 @@ public class FloorManager : MonoBehaviour
 
     /// <summary>
     /// Ends the run by loading the Ending scene (through EndScreens). Called automatically when the floor number goes past "Last Floor"; any script
-    /// can also call it directly (for example from the stairs button on the last floor, to skip the extra black screen).
+    /// can also call it directly (for example from a script on the last floor, to skip the extra black screen).
     /// </summary>
     public void WinRun()
     {
@@ -190,23 +243,24 @@ public class FloorManager : MonoBehaviour
         else Debug.LogWarning("FloorManager: the run is won but there is no EndScreens in the scene to load the Ending scene.", this);
     }
 
-    // Restores a fraction of the player's MAX health (so health upgrades from the Shop count). AddHealth clamps at max.
-    private void HealPlayer(float fraction)
+    // Restores a fraction of each living player's MAX health (so health upgrades from the Shop count). AddHealth clamps at max.
+    private void HealPlayers(float fraction)
     {
         if (fraction <= 0f) return;
 
-        GameObject player = GameObject.FindWithTag("Player");
-        if (player == null) return;
-
-        HealthComponent hp = player.GetComponentInParent<HealthComponent>();
-        if (hp == null) hp = player.GetComponentInChildren<HealthComponent>();
-        if (hp != null) hp.AddHealth(hp.MaxHealth * fraction);
+        CoopHealth[] all = CoopHealth.Players.ToArray();
+        for (int i = 0; i < all.Length; i++)
+        {
+            CoopHealth hp = all[i];
+            if (hp == null || !hp.IsAlive || !CoopRules.Counts(hp.PlayerNumber)) continue;
+            hp.AddHealth(hp.MaxHealth * fraction);
+        }
     }
 
     /// <summary>
-    /// Sends the player down one floor with the full change: black "Floor Level N" screen, teleport to that floor's spawn
-    /// point, old foes removed, new floor's foes started. Works without the stairs menu. (If no black screen is set up,
-    /// the player still goes down, just without the fade.)
+    /// Sends the players down one floor with the full change: black "Floor Level N" screen, teleport to that floor's spawn
+    /// points, old foes removed, new floor's foes started. Works without a door. (If no black screen is set up,
+    /// the players still go down, just without the fade.)
     /// </summary>
     public void GoDownFloor()
     {
@@ -216,6 +270,8 @@ public class FloorManager : MonoBehaviour
             Debug.LogWarning("FloorManager: GoDownFloor() needs a FloorController in the scene.", this);
             return;
         }
+
+        floorController.GoDown();
     }
 
     /// <summary>
@@ -280,10 +336,197 @@ public class FloorManager : MonoBehaviour
         return false;
     }
 
+    // ------------------------------------------------------------ hazard tiles (lava, water, spikes)
+
+    // Reads the tile under each player and hurts them by player number:
+    //   lava / water   only the players in Lava Hurts / Water Hurts, once per Hazard Tick Seconds
+    //   spikes         every player, once per Spike Cooldown, only while the spike shows a frame not in Safe Spike Frames
+    private void CheckHazards()
+    {
+        if (FloorController.BlocksInput || MenuController.IsOpen) return;   // nobody is hurt behind a menu or a black screen
+
+        for (int n = 1; n <= MaxPlayers; n++)
+        {
+            CoopHealth p = CoopHealth.Get(n);
+            if (p == null || !p.IsAlive || !CoopRules.Counts(n)) continue;
+
+            bool onLava;
+            bool onWater;
+            bool onSpike;
+            string detail;
+            ReadHazardTiles(HazardPoint(n, p), out onLava, out onWater, out onSpike, out detail);
+
+            if (onSpike && Time.time >= nextSpikeTime[n])
+            {
+                nextSpikeTime[n] = Time.time + spikeCooldown;
+                HurtByHazard(p, spikeDamage, "spikes", detail);
+                if (!p.IsAlive) continue;
+            }
+
+            string source = null;
+            float amount = 0f;
+            if (onLava && Listed(lavaHurts, n)) { source = "lava"; amount = lavaDamage; }
+            else if (onWater && Listed(waterHurts, n)) { source = "water"; amount = waterDamage; }
+
+            if (source != null && Time.time >= nextTickTime[n])
+            {
+                nextTickTime[n] = Time.time + hazardTickSeconds;
+                HurtByHazard(p, amount, source, detail);
+            }
+        }
+    }
+
+    private void HurtByHazard(CoopHealth player, float amount, string source, string detail)
+    {
+        if (amount <= 0f) return;
+
+        if (logHazards)
+        {
+            Debug.Log("FloorManager: Player " + player.PlayerNumber + " hurt by " + source + " for " + amount + " (" + detail + ").", player);
+        }
+        player.ApplyDamage(amount);   // goes through CoopHealth: Invincible and the CoopRules still apply
+    }
+
+    // Looks at every hazard tilemap under one point and says what is there.
+    private void ReadHazardTiles(Vector2 point, out bool onLava, out bool onWater, out bool onSpike, out string detail)
+    {
+        onLava = false;
+        onWater = false;
+        onSpike = false;
+        detail = "";
+
+        Tilemap[] maps = HazardMaps();
+        for (int i = 0; i < maps.Length; i++)
+        {
+            Tilemap map = maps[i];
+            if (map == null) continue;
+
+            Vector3Int cell = map.WorldToCell(point);
+            cell.z = 0;   // a tilemap that sits at a different Z would otherwise look one layer off and find nothing
+
+            TileBase tile = map.GetTile(cell);
+            if (tile == null) continue;
+
+            Sprite shown = map.GetSprite(cell);
+            string spriteName = shown != null ? shown.name : "";
+            string names = "tile '" + tile.name + "', sprite '" + spriteName + "'";
+
+            if (NameHas(tile.name, lavaName) || NameHas(spriteName, lavaName))
+            {
+                onLava = true;
+                detail = names;
+            }
+            if (NameHas(tile.name, waterName) || NameHas(spriteName, waterName))
+            {
+                onWater = true;
+                detail = names;
+            }
+            if (NameHas(tile.name, spikeName) || NameHas(spriteName, spikeName))
+            {
+                int frame = SpikeFrame(map, cell, spriteName);
+                if (!Listed(safeSpikeFrames, frame))
+                {
+                    onSpike = true;
+                    detail = names + ", frame " + frame;
+                }
+            }
+        }
+    }
+
+    // Which frame of the spike is showing right now. An Animated Tile always reports ONE fixed picture through GetSprite, so for
+    // those the current frame comes from the animation itself (frame 0 = its first picture: keep the pictures in _0, _1, _2...
+    // order). A tile that isn't animated uses the number at the end of its sprite name. -1 = no number found (it hurts).
+    private static int SpikeFrame(Tilemap map, Vector3Int cell, string spriteName)
+    {
+        if (map.GetAnimationFrameCount(cell) > 1) return map.GetAnimationFrame(cell);
+        return FrameNumber(spriteName);
+    }
+
+    // The number at the very end of a name: "spike-trap-16px_strip8_2" -> 2.
+    private static int FrameNumber(string spriteName)
+    {
+        if (string.IsNullOrEmpty(spriteName)) return -1;
+
+        int end = spriteName.Length;
+        int start = end;
+        while (start > 0 && char.IsDigit(spriteName[start - 1])) start--;
+        if (start == end) return -1;
+
+        int value;
+        return int.TryParse(spriteName.Substring(start), out value) ? value : -1;
+    }
+
+    private static bool Listed(int[] list, int value)
+    {
+        return list != null && System.Array.IndexOf(list, value) >= 0;
+    }
+
+    // Capitals, spaces, dashes and underscores are ignored, so "lava" is found in "Lava-16px_strip12_3".
+    private static bool NameHas(string candidate, string wanted)
+    {
+        string a = Normalize(candidate);
+        string b = Normalize(wanted);
+        return a.Length > 0 && b.Length > 0 && a.Contains(b);
+    }
+
+    private static string Normalize(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+
+        var sb = new System.Text.StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (char.IsLetterOrDigit(text[i])) sb.Append(char.ToLowerInvariant(text[i]));
+        }
+        return sb.ToString();
+    }
+
+    private Tilemap[] HazardMaps()
+    {
+        if (hazardTilemaps != null && hazardTilemaps.Length > 0) return hazardTilemaps;
+
+        if (autoHazardMaps == null || Time.unscaledTime >= nextHazardMapRefresh)
+        {
+            autoHazardMaps = FindObjectsByType<Tilemap>(FindObjectsSortMode.None);
+            nextHazardMapRefresh = Time.unscaledTime + 1f;
+        }
+        return autoHazardMaps;
+    }
+
+    // The spot on a player where the tile is read: the middle of their solid collider, plus the offset.
+    private Vector2 HazardPoint(int playerNumber, CoopHealth player)
+    {
+        if (playerColliderOwners[playerNumber] != player)
+        {
+            playerColliderOwners[playerNumber] = player;
+            playerColliders[playerNumber] = PickPlayerCollider(player.gameObject);
+        }
+
+        Collider2D c = playerColliders[playerNumber];
+        Vector2 centre = c != null ? (Vector2)c.bounds.center : (Vector2)player.transform.position;
+        return centre + hazardCheckOffset;
+    }
+
+    private static Collider2D PickPlayerCollider(GameObject go)
+    {
+        Collider2D[] all = go.GetComponentsInChildren<Collider2D>();
+        Collider2D fallback = null;
+        for (int i = 0; i < all.Length; i++)
+        {
+            Collider2D c = all[i];
+            if (!c.enabled) continue;
+            if (!c.isTrigger) return c;
+            if (fallback == null) fallback = c;
+        }
+        return fallback;
+    }
+
     // ------------------------------------------------------------ stray foe check
 
     private void Update()
     {
+        if (hazardsEnabled) CheckHazards();
+
         if (!removeStrayFoes || Time.time < nextCheckTime) return;
         nextCheckTime = Time.time + checkInterval;
         CheckFoes();
