@@ -76,6 +76,7 @@ public static class CoopSceneSetup
         FixPlayerHealth(player1, player2);
         FixInputHub(player1, player2);
         FixHud();
+        Report();
 
         if (found == 0)
         {
@@ -550,6 +551,73 @@ public static class CoopSceneSetup
                 if (owner != canvas.gameObject) DestroyIfEmpty(owner);
             }
         }
+    }
+
+    // ------------------------------------------------------------ report
+
+    // Lists what is really in the scene (after any fixes), so a problem can be seen without hunting through the Hierarchy.
+    private static void Report()
+    {
+        log.AppendLine("--- What is in the scene right now ---");
+
+        PlayerInputHub hub = Object.FindFirstObjectByType<PlayerInputHub>(FindObjectsInactive.Include);
+        log.AppendLine("PlayerInputHub: " + (hub != null ? "'" + PathOf(hub.transform) + "'" : "NONE"));
+
+        CoopHealth[] healths = Object.FindObjectsByType<CoopHealth>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        log.AppendLine("CoopHealth components: " + healths.Length);
+        for (int i = 0; i < healths.Length; i++)
+        {
+            PlayerInputSource input = healths[i].GetComponent<PlayerInputSource>();
+            log.AppendLine("   on '" + PathOf(healths[i].transform) + "'   Player Number: " + (input != null ? input.playerNumber.ToString() : "no PlayerInputSource"));
+        }
+
+        LocalCoopManager[] managers = Object.FindObjectsByType<LocalCoopManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < managers.Length; i++)
+        {
+            LocalCoopManager m = managers[i];
+            string inside = (m.player2 != null && m.transform.IsChildOf(m.player2.transform)) ? "   <-- PROBLEM: the manager is on Player 2 or inside it" : "";
+            log.AppendLine("LocalCoopManager on '" + PathOf(m.transform) + "'   Player 2 slot: " +
+                           (m.player2 != null ? "'" + PathOf(m.player2.transform) + "'" : "EMPTY") + inside);
+        }
+
+        Healthbar[] bars = Object.FindObjectsByType<Healthbar>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        log.AppendLine("Healthbar components: " + bars.Length);
+        for (int i = 0; i < bars.Length; i++)
+        {
+            log.AppendLine("   '" + PathOf(bars[i].transform) + "'   " + (bars[i].gameObject.activeInHierarchy ? "active" : "hidden") +
+                           "   Health: " + (bars[i].Health != null ? "'" + bars[i].Health.name + "'" : "none"));
+        }
+
+        CoopHealthbarBinder[] binders = Object.FindObjectsByType<CoopHealthbarBinder>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        log.AppendLine("Health bar binders: " + binders.Length);
+        for (int i = 0; i < binders.Length; i++)
+        {
+            log.AppendLine("   '" + PathOf(binders[i].transform) + "'   Player " + binders[i].playerNumber + "   bar: " +
+                           (binders[i].healthbar != null ? "'" + PathOf(binders[i].healthbar.transform) + "'" : "EMPTY"));
+        }
+
+        CoopInventoryPanel[] panels = Object.FindObjectsByType<CoopInventoryPanel>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        log.AppendLine("Inventory bars: " + panels.Length);
+        for (int i = 0; i < panels.Length; i++)
+        {
+            log.AppendLine("   '" + PathOf(panels[i].transform) + "'   Player " + panels[i].playerNumber + "   " +
+                           (panels[i].transform is RectTransform ? "UI object" : "NOT a UI object (needs to be inside the Canvas)"));
+        }
+
+        log.AppendLine("Layouts: " + Object.FindObjectsByType<CoopHealthbarLayout>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length +
+                       " health, " + Object.FindObjectsByType<CoopInventoryLayout>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length + " inventory");
+    }
+
+    private static string PathOf(Transform t)
+    {
+        if (t == null) return "(none)";
+        string path = t.name;
+        while (t.parent != null)
+        {
+            t = t.parent;
+            path = t.name + "/" + path;
+        }
+        return path;
     }
 
     // ------------------------------------------------------------ helpers

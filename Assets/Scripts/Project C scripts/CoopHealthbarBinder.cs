@@ -89,6 +89,10 @@ public class CoopHealthbarBinder : CoopHudPanel
     private void Awake()
     {
         warnAt = Time.unscaledTime + 3f;
+
+        // The bar is meant to be a child of this object: find it by itself instead of needing it dragged in.
+        if (healthbar == null) healthbar = GetComponentInChildren<Healthbar>(true);
+
         if (healthbar == null)
         {
             Debug.LogError("CoopHealthbarBinder on '" + name + "': the Healthbar slot is empty, so nothing can be shown. " +
