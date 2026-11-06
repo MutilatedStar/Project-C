@@ -25,6 +25,10 @@ using UnityEngine;
 /// HUD (a panel on any other kind of canvas is repaired, or at least reported, by CoopHudPanel). A panel that isn't
 /// showing (that player isn't in the game) is left alone until it appears. A panel placed INSIDE a PlayerViewFrame is
 /// left alone too: that frame covers exactly its player's view, and the panel's own anchors keep it in its corner.
+///
+/// Safety: a panel is only ever sent to a spot that is a real number and near the screen, and it is moved to an ABSOLUTE spot
+/// (target + the offset measured when it appeared), so a mismatched Footprint or a second script moving the same bar can no longer
+/// make it run away to Infinity. If the measured panel does not follow the object being moved, one warning in the Console names both.
 /// </summary>
 public abstract class CoopHudLayout : MonoBehaviour
 {
@@ -79,6 +83,20 @@ public abstract class CoopHudLayout : MonoBehaviour
         public Vector3 authored;       // where you placed it: anchored position (or local position)
         public Vector2 authoredNorm;   // where its centre sat on the screen, as 0..1
 
+        // How far the moved object's pivot sits from the panel's measured centre (screen pixels). It is measured when the panel
+        // appears or changes size, and NOT every frame: re-measuring it every frame is what let a mismatched Footprint feed back
+        // on itself and fling the bar to infinity.
+        public Vector2 pivotOffset;
+        public Vector2 lastHalf;
+        public bool hasOffset;
+
+        // For the "is the panel really following its slot?" check (reported once, as a warning).
+        public Vector2 prevCentre;
+        public Vector2 prevMove;
+        public bool hasPrev;
+        public int notFollowing;
+        public bool warned;
+
         // For the Inspector read-out only.
         public string note = "not looked at yet";
         public Vector2 centre;         // where the panel is now (screen pixels)
@@ -122,7 +140,7 @@ public abstract class CoopHudLayout : MonoBehaviour
     {
         SplitScreenCamera rig = SplitScreenCamera.Current;
         SplitViews views = rig != null ? rig.CurrentViews() : FullScreenViews();
-        float k = 1f - Mathf.Exp(-moveSpeed * Time.unscaledDeltaTime);
+        float k = Mathf.Clamp01(1f - Mathf.Exp(-moveSpeed * Time.unscaledDeltaTime));   // 0..1 only: a negative speed must not push panels AWAY
 
         for (int i = 0; i < 2; i++) Layout(i, views, k);
 
@@ -176,6 +194,10 @@ public abstract class CoopHudLayout : MonoBehaviour
             st.captured = false;
             st.wasShown = false;
             st.settledFree = false;
+            st.hasOffset = false;
+            st.hasPrev = false;
+            st.notFollowing = 0;
+            st.warned = false;
         }
         st.hasTarget = false;
         st.hiddenNow = false;
@@ -200,8 +222,32 @@ public abstract class CoopHudLayout : MonoBehaviour
         }
 
         Transform slot = bar.SlotTransform;
+        float limit = SaneLimit();
+
+        // Safety net: if the panel has already been thrown off to nowhere (or to a position that is not even a number), put it
+        // back where it was placed. There is nothing sensible to measure or chase out there.
+        if (!IsSane(slot.position, limit))
+        {
+            Vector3 lost = slot.position;
+            Vector3 home = st.captured ? WorldOf(slot, st.authored) : lost;
+            if (st.captured && IsSane(home, limit)) slot.position = home;
+            st.hasOffset = false;
+            st.hasPrev = false;
+            st.note = "the panel was far off the screen (" + lost + "): put back where it was placed";
+            return;
+        }
+
         Vector2 centre, half;
         GetFootprint(bar, out centre, out half);
+
+        // A measurement that is not a real number (or is absurdly far away) can't be acted on. Skip the frame instead of handing
+        // it to Unity: that is what used to fill the Console with "transform.position assign attempt ... is not valid".
+        if (!IsSane(centre, limit) || !IsSane(half, limit))
+        {
+            st.hasPrev = false;
+            st.note = "the panel's measured spot or size is not usable (centre " + centre + ", half size " + half + "): skipped";
+            return;
+        }
 
         // First sight of this bar: remember where it was placed, before this script moves anything.
         if (!st.captured)
@@ -224,6 +270,8 @@ public abstract class CoopHudLayout : MonoBehaviour
         if (mode == LayoutMode.Free)
         {
             st.note = "Free mode: left where you put it";
+            st.hasOffset = false;   // measured afresh when it is next placed
+            st.hasPrev = false;
             LayoutFree(st, slot, centre, k, snap);
             return;
         }
@@ -231,14 +279,72 @@ public abstract class CoopHudLayout : MonoBehaviour
         st.settledFree = false;
         Vector2 target = mode == LayoutMode.Mirror ? MirrorTarget(player, half, views) : AutoTarget(player, half, views);
 
-        Vector3 delta = new Vector3(target.x - centre.x, target.y - centre.y, 0f);
-        slot.position += snap ? delta : delta * k;
+        if (!IsSane(target, limit))
+        {
+            st.hasPrev = false;
+            st.note = "the target spot is not usable (" + target + "): are the split-screen views set up yet?";
+            return;
+        }
+
+        Vector3 here = slot.position;
+        Vector2 now = new Vector2(here.x, here.y);
+
+        // Measure how far the moved object's pivot sits from the panel's centre. Only when the panel has just appeared or changed
+        // size: the offset between the two never changes while the panel is simply being moved.
+        bool remeasure = snap || !st.hasOffset || (half - st.lastHalf).sqrMagnitude > 1f;
+
+        // Is the measured panel really following the object we move? (Warns once if not; changes nothing.)
+        if (!remeasure) CheckFollowing(st, bar, slot, centre);
+
+        if (remeasure)
+        {
+            Vector2 fresh = now - centre;
+            st.pivotOffset = IsSane(fresh, limit) ? fresh : Vector2.zero;
+            st.lastHalf = half;
+            st.hasOffset = true;
+        }
+
+        // Where the moved object's pivot has to be for the panel's centre to sit on the target. An absolute spot, not "the gap
+        // measured this frame": the move can only ever converge on it, whatever the measurement does.
+        Vector2 desired = target + st.pivotOffset;
+        Vector2 next = snap ? desired : Vector2.Lerp(now, desired, k);
+
+        Vector3 moved = new Vector3(next.x, next.y, here.z);
+        bool apply = IsSane(moved, limit);   // never hand Unity a position it will refuse
+        if (apply) slot.position = moved;
+
+        st.prevCentre = centre;
+        st.prevMove = apply ? next - now : Vector2.zero;
+        st.hasPrev = true;
 
         st.note = "placing it (" + mode + ")";
         st.centre = centre;
         st.size = half * 2f;
         st.target = target;
         st.hasTarget = true;
+    }
+
+    // Diagnostics only. A panel is placed by moving its slot object, so the measured panel has to move by the same amount. When
+    // it doesn't, the layout can't line it up, and the bar just ends up somewhere that looks wrong. Say why, once, by name.
+    private void CheckFollowing(BarState st, CoopHudPanel bar, Transform slot, Vector2 centre)
+    {
+        if (!st.hasPrev || st.warned) return;
+
+        float asked = st.prevMove.magnitude;
+        if (asked < 8f) return;   // too small a move to tell
+
+        Vector2 followed = centre - st.prevCentre;
+        bool follows = (followed - st.prevMove).magnitude <= 0.5f * asked + 3f;
+        st.notFollowing = follows ? 0 : st.notFollowing + 1;
+        if (st.notFollowing < 5) return;
+
+        st.warned = true;
+        RectTransform foot = bar.Footprint;
+        Debug.LogWarning(Group + " panel for Player " + (bar.playerNumber) + ": the layout moved '" + PathOf(slot) + "' by " + Mathf.RoundToInt(asked) +
+                         " px, but the panel's measured size box (" + (foot != null ? "'" + PathOf(foot) + "'" : "the pictures drawn in the bar") +
+                         ") moved " + Mathf.RoundToInt(followed.magnitude) + " px, so it can't be lined up. The Footprint must be INSIDE the object that is moved, and nothing else " +
+                         "(a Layout Group, a follow-the-player script, a second Healthbar layout) may be positioning the same bar. " +
+                         "This is only a warning: the bar can no longer run away because of it.", bar);
     }
 
     // ------------------------------------------------------------ Free
@@ -457,5 +563,41 @@ public abstract class CoopHudLayout : MonoBehaviour
     private static void GetFootprint(CoopHudPanel bar, out Vector2 centre, out Vector2 half)
     {
         bar.GetBounds(out centre, out half);
+    }
+
+    // ------------------------------------------------------------ safety checks
+
+    // Nothing on a screen is ever this far away. Far enough that a panel a person parked off to the side still passes, near
+    // enough that a runaway value is caught long before it reaches Infinity.
+    private static float SaneLimit()
+    {
+        return Mathf.Max(Screen.width, Screen.height, 100) * 10f;
+    }
+
+    private static bool IsFinite(float v)
+    {
+        return !float.IsNaN(v) && !float.IsInfinity(v);
+    }
+
+    private static bool IsSane(Vector2 v, float limit)
+    {
+        return IsFinite(v.x) && IsFinite(v.y) && Mathf.Abs(v.x) <= limit && Mathf.Abs(v.y) <= limit;
+    }
+
+    private static bool IsSane(Vector3 v, float limit)
+    {
+        return IsFinite(v.z) && Mathf.Abs(v.z) <= limit && IsSane(new Vector2(v.x, v.y), limit);
+    }
+
+    private static string PathOf(Transform t)
+    {
+        if (t == null) return "(none)";
+        string path = t.name;
+        while (t.parent != null)
+        {
+            t = t.parent;
+            path = t.name + "/" + path;
+        }
+        return path;
     }
 }

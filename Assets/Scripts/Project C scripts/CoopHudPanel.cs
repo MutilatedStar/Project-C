@@ -70,7 +70,53 @@ public abstract class CoopHudPanel : MonoBehaviour
     protected virtual Transform MeasureRoot { get { return transform; } }
 
     /// <summary>The rectangle that counts as the panel's size.</summary>
-    public RectTransform Footprint { get { return footprint != null ? footprint : DefaultFootprint; } }
+    public RectTransform Footprint
+    {
+        get
+        {
+            RectTransform assigned = UsableFootprint;
+            return assigned != null ? assigned : DefaultFootprint;
+        }
+    }
+
+    private bool warnedOutside;
+
+    /// <summary>
+    /// The Footprint you assigned, if it can be used: it has to be INSIDE the object the layout moves (SlotTransform). The layout places a
+    /// panel by moving that object and then measuring the panel again, so a size box that sits somewhere else never follows the move.
+    /// The layout would chase it for ever (this is what flung the health bars off to Infinity). Such a Footprint is ignored, once, with a warning.
+    /// </summary>
+    private RectTransform UsableFootprint
+    {
+        get
+        {
+            if (footprint == null) return null;
+
+            Transform slot = SlotTransform;
+            if (slot == null || footprint.IsChildOf(slot)) return footprint;
+
+            if (!warnedOutside)
+            {
+                warnedOutside = true;
+                Debug.LogWarning(name + " (Player " + playerNumber + "): its Footprint '" + PathOf(footprint) + "' is not inside '" + PathOf(slot) +
+                                 "', the object the layout moves to place this panel, so it could never be lined up with it. It is being ignored and the " +
+                                 "size is measured from the bar itself instead. Clear the Footprint slot, or drag in a rectangle that is INSIDE that object.", this);
+            }
+            return null;
+        }
+    }
+
+    private static string PathOf(Transform t)
+    {
+        if (t == null) return "(none)";
+        string path = t.name;
+        while (t.parent != null)
+        {
+            t = t.parent;
+            path = t.name + "/" + path;
+        }
+        return path;
+    }
 
     /// <summary>The panel of this family for this player, or null.</summary>
     public static CoopHudPanel Get(HudGroup group, int playerNumber)
@@ -94,7 +140,8 @@ public abstract class CoopHudPanel : MonoBehaviour
     /// <summary>The panel's size in screen pixels: its centre and half size. This is what the layout uses.</summary>
     public void GetBounds(out Vector2 centre, out Vector2 half)
     {
-        RectTransform rect = Footprint;
+        RectTransform assigned = UsableFootprint;
+        RectTransform rect = assigned != null ? assigned : DefaultFootprint;
         if (rect == null)
         {
             // Nothing to take a size from (a bar whose root is not a UI rectangle): measure what is drawn.
@@ -118,7 +165,7 @@ public abstract class CoopHudPanel : MonoBehaviour
         // Nothing assigned and the rectangle can't be trusted as the bar's size: measure what is actually drawn inside it.
         // That is the case when it is huge, when it is tiny, and when it belongs to a Canvas (a bar prefab that carries its own
         // Canvas has a rectangle that Unity controls, which has nothing to do with how big the bar looks).
-        if (footprint == null && (IsHuge(max - min) || IsTiny(max - min) || rect.GetComponent<Canvas>() != null))
+        if (assigned == null && (IsHuge(max - min) || IsTiny(max - min) || rect.GetComponent<Canvas>() != null))
         {
             Vector2 drawnMin, drawnMax;
             if (MeasureDrawn(out drawnMin, out drawnMax))
@@ -132,7 +179,7 @@ public abstract class CoopHudPanel : MonoBehaviour
                 warnedHuge = true;
                 Debug.LogWarning(name + " (Player " + playerNumber + "): this panel's size came out as " + Mathf.RoundToInt(max.x - min.x) + " x " +
                                  Mathf.RoundToInt(max.y - min.y) + " pixels, which can't be right for a bar, so it can't be kept in its corner. " +
-                                 "Drag the bar's Background image (the picture that is as big as the bar looks) into Footprint.", this);
+                                 "Drag the bar's Background image (the picture that is as big as the bar looks, and it must be inside the bar) into Footprint.", this);
             }
         }
 
