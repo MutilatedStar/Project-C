@@ -27,6 +27,13 @@ namespace Ilumisoft.HealthSystem.UI
         float currentValue;
         bool started;   // has currentValue been set from a real Health yet?
 
+        // Read (and, for Align With Camera, set) by CoopHealthbarBinder: a bar in the screen HUD must not turn to face the camera,
+        // and the binder's "why is nothing drawn?" report needs to see these.
+        public bool AlignsWithCamera { get { return alignWithCamera; } set { alignWithCamera = value; } }
+        public bool HideEmpty { get { return hideEmpty; } }
+        public Canvas BarCanvas { get { return canvas; } }
+        public Image FillImage { get { return fillImage; } }
+
         protected virtual void Reset()
         {
             if (Health == null)
