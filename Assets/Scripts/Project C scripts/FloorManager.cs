@@ -42,6 +42,10 @@ using Ilumisoft.HealthSystem;
 ///           (frames 0 and 1 by default, so only spike-trap-16px_strip8_2 to _7 hurt). Players are hurt through
 ///           CoopHealth.ApplyDamage, so Invincible and the CoopRules (Shared Damage, Single Player Mode) still apply.
 ///
+/// HazardTileFx (a separate script on its own object) gives those same lava and water tiles their glow, hopping pieces and walking
+/// sounds. It reads the tile names, the Tilemaps and the foot point from here (see "hooks for HazardTileFx" below), so what glows is
+/// exactly what burns. This script does not need it, and it does not need this script's "Hazards Enabled" box ticked.
+///
 /// Put this on an empty object and drag the FoeSpawner into "spawner". The spawner's "Auto Start" box is now ignored
 /// (this script starts the right level itself), so it no longer matters whether it is ticked.
 /// </summary>
@@ -519,6 +523,33 @@ public class FloorManager : MonoBehaviour
             if (fallback == null) fallback = c;
         }
         return fallback;
+    }
+
+    // ------------------------------------------------------------ hooks for HazardTileFx (read-only)
+
+    /// <summary>The name a tile must contain to count as lava (the same rule that hurts).</summary>
+    public string LavaName { get { return lavaName; } }
+
+    /// <summary>The name a tile must contain to count as water (the same rule that hurts).</summary>
+    public string WaterName { get { return waterName; } }
+
+    /// <summary>The Tilemaps hazards are read from: the list you set, or every Tilemap in the scene (refreshed once a second).</summary>
+    public Tilemap[] HazardTilemapList { get { return HazardMaps(); } }
+
+    /// <summary>The spot on this player where the hazard tile is read (middle of their solid collider plus "Hazard Check Offset").</summary>
+    public Vector2 HazardPointOf(CoopHealth player)
+    {
+        if (player == null) return Vector2.zero;
+
+        int n = player.PlayerNumber;
+        if (n < 1 || n > MaxPlayers) return player.transform.position;
+        return HazardPoint(n, player);
+    }
+
+    /// <summary>The name rule used for lava, water and spikes: capitals, spaces, dashes and underscores don't matter.</summary>
+    public static bool TileNameHas(string candidate, string wanted)
+    {
+        return NameHas(candidate, wanted);
     }
 
     // ------------------------------------------------------------ stray foe check
