@@ -11,17 +11,23 @@ using Ilumisoft.HealthSystem;
 /// Put this on an object that is ALWAYS active in the dungeon scene (an empty GameObject named "FloorController",
 /// same idea as MenuController). NOT on a player (players are prefabs) and NOT on a canvas that gets hidden.
 ///
-/// It owns the floor NUMBER and the floor change. The stairs are gone: floors are changed by DOORS (FloorDoor). A door
-/// tints itself with the colour of whoever stands on it, and when every player that counts is on it, the door calls
-/// UseDoor() here. Then:
+/// It owns the floor NUMBER and the floor change, and it is the ONE place everything else is linked to. The stairs are
+/// gone: floors are changed by DOORS (FloorDoor). Each floor lists ITS OWN doors (see "Floors" below) and this script checks
+/// the doors of the floor the team is on, every frame. When every available player is standing on a door AND the players
+/// fill the doors, one player per door (NOT everybody on the same door), the team goes down. Then:
 ///
 ///   1. the black "Floor Level N" screen fades in, and every foe is cleared (no score),
 ///   2. EACH player is moved to THEIR OWN spawn point for the new floor (see "Floors" below),
 ///   3. FloorChanged fires (FloorManager starts the new floor's foes), and the screen fades out.
 ///
-///   Floors        one row per floor (row 0 = floor 1). Each row has an empty object for Player 1, Player 2 and, if you
-///                 ever need them, Players 3 and 4. A player with no object of their own lands on Player 1's. Past the last
-///                 row, the last row is reused.
+///   Floors        THE LINKER. One element per floor (element 0 = floor 1). Each element holds everything that belongs to
+///                 that floor:
+///                   - an empty object for Player 1, Player 2 and, if you ever need them, Players 3 and 4: where they land
+///                     (a player with no object of their own lands on Player 1's),
+///                   - the DOORS of that floor (FloorDoor objects from the scene),
+///                   - the pillar ROOMS of that floor (PillarRoom objects from the scene).
+///                 Past the last element, the last one is reused. Only the doors and rooms of the CURRENT floor are live:
+///                 when the team arrives on a floor, that floor's doors start being checked and the others go quiet.
 ///   Healing Fountain   a tile whose name (tile asset OR sprite) contains the fountain name. It heals the player who steps
 ///                 on it ONE time per fountain tile, then its picture changes to the Used Fountain Sprite (if you set one).
 ///                 ChangeTileSprite() is public if you want to swap any other tile's picture from your own scripts.
@@ -47,9 +53,9 @@ public class FloorController : MonoBehaviour
     private const int MaxPlayers = 4;
     private const float PlayerWaitSeconds = 2f;   // after the Shop, how long to wait for the players to appear
 
-    /// <summary>Where each player lands on ONE floor. Drag empty objects in.</summary>
+    /// <summary>Everything that belongs to ONE floor: where each player lands, its doors, its pillar rooms.</summary>
     [System.Serializable]
-    public class FloorSpawn
+    public class FloorLink
     {
         [Tooltip("Just a name for this row in the Inspector (for example Floor 1). The game doesn't read it.")]
         public string label;
@@ -61,6 +67,12 @@ public class FloorController : MonoBehaviour
         public Transform player3;
         [Tooltip("Optional. Player 4. Leave empty if you only have two players: they land on Player 1's object instead.")]
         public Transform player4;
+
+        [Tooltip("The doors of THIS floor (drag the FloorDoor objects from the scene). The team goes down when every available player is on a door and the players fill the doors, one per door. " +
+                 "Doors set to Shop form a second group that opens the Shop instead.")]
+        public FloorDoor[] doors;
+        [Tooltip("The pillar rooms of THIS floor (drag the PillarRoom objects from the scene). Only these rooms react while the team is on this floor.")]
+        public PillarRoom[] rooms;
 
         public Transform For(int playerNumber)
         {
@@ -100,9 +112,10 @@ public class FloorController : MonoBehaviour
     [Header("Floors")]
     [Tooltip("The floor number the run starts on.")]
     [SerializeField, Min(1)] private int startingFloor = 1;
-    [Tooltip("Where the players land on each floor: element 0 = floor 1, element 1 = floor 2, and so on. Each element has one empty object per player. " +
+    [Tooltip("One element per floor: element 0 = floor 1, element 1 = floor 2, and so on. Each element links that floor's player spawn points, its doors and its pillar rooms. " +
              "If the players go deeper than the list is long, the last element is reused.")]
-    [SerializeField] private FloorSpawn[] floorSpawns;
+    [UnityEngine.Serialization.FormerlySerializedAs("floorSpawns")]
+    [SerializeField] private FloorLink[] floors;
 
     [Header("Floor screen (the black screen)")]
     [Tooltip("Your black object. It is hidden until a floor change, then fades in over everything on its canvas. A CanvasGroup is added to it automatically.")]
@@ -165,6 +178,7 @@ public class FloorController : MonoBehaviour
     private readonly HashSet<(Tilemap, Vector3Int)> usedFountains = new HashSet<(Tilemap, Vector3Int)>();
     private readonly Dictionary<int, string> lastLogged = new Dictionary<int, string>();   // per player number
     private readonly HashSet<string> warned = new HashSet<string>();
+    private bool doorsArmed;   // false until the doors have been seen NOT ready, so a door can't fire the instant a floor starts
 
     // Each player's solid collider, found once (it is only used to find the middle of the player).
     private readonly Collider2D[] colliderCache = new Collider2D[MaxPlayers + 1];
@@ -196,6 +210,8 @@ public class FloorController : MonoBehaviour
 
     private void Start()
     {
+        ApplyActiveFloor(CurrentFloor);
+        CheckWiring();
         if (returningFromShop) StartCoroutine(ChangeFloorRoutine(CurrentFloor, true));
     }
 
@@ -211,13 +227,16 @@ public class FloorController : MonoBehaviour
         if (warned.Add(key)) Debug.LogWarning(message, this);
     }
 
-    // ------------------------------------------------------------ main loop: the fountain
+    // ------------------------------------------------------------ main loop: the doors and the fountain
 
     private void Update()
     {
         if (IsChangingFloor) return;
         if (PauseController.IsPaused) return;   // nothing under the players counts while a menu is up
         if (MenuController.IsOpen) return;
+
+        CheckDoors();
+        if (IsChangingFloor) return;   // a door just fired
 
         for (int n = 1; n <= MaxPlayers; n++)
         {
@@ -441,20 +460,134 @@ public class FloorController : MonoBehaviour
 
     // ------------------------------------------------------------ doors
 
-    /// <summary>
-    /// Called by a FloorDoor when every player that counts is standing on it. Returns true if the door was accepted
-    /// (the floor change or the Shop trip has started), false if it has to wait (a floor change is already running,
-    /// or the pause menu / notebook is open). The door just asks again on the next frame.
-    /// </summary>
-    public bool UseDoor(FloorDoor.DoorAction action)
+    // The floor the team is on, as an index into Floors (the last element is reused past the end), or -1 with no Floors list.
+    private int CurrentRowIndex()
     {
-        if (IsChangingFloor) return false;
-        if (PauseController.IsPaused || MenuController.IsOpen) return false;
+        if (floors == null || floors.Length == 0) return -1;
+        return Mathf.Clamp(CurrentFloor - 1, 0, floors.Length - 1);
+    }
 
-        if (action == FloorDoor.DoorAction.Shop) return TryOpenShop();
+    // The floor checker. Looks at the doors of the floor the team is on and fires when every available player is on a door
+    // and the players fill the doors (FloorDoor.CheckGroup has the exact rule). Doors set to Next Floor and doors set to Shop
+    // are two separate groups. The doors of other floors are not looked at at all.
+    private void CheckDoors()
+    {
+        int index = CurrentRowIndex();
+        if (index < 0) return;
 
-        GoDown();
-        return true;
+        FloorLink row = floors[index];
+        if (row == null || row.doors == null || row.doors.Length == 0)
+        {
+            WarnOnce("nodoors" + index, "FloorController: Floors element " + index + " (floor " + (index + 1) + ") has no doors listed, so the team can't leave it. " +
+                                        "Drag that floor's FloorDoor objects into its Doors list.");
+            return;
+        }
+
+        bool down = FloorDoor.CheckGroup(row.doors, FloorDoor.DoorAction.NextFloor);
+        bool shop = FloorDoor.CheckGroup(row.doors, FloorDoor.DoorAction.Shop);
+
+        if (!down && !shop)
+        {
+            doorsArmed = true;   // seen not ready: the next time they ARE ready, they fire
+            return;
+        }
+        if (!doorsArmed) return;
+
+        doorsArmed = false;
+        if (down) GoDown();
+        else TryOpenShop();
+    }
+
+    // Makes the floor the team has just arrived on the live one: its doors start being checked, the other floors' doors forget
+    // who was on them, and only its pillar rooms react. A room that no floor lists is left alone (always live).
+    private void ApplyActiveFloor(int floor)
+    {
+        doorsArmed = false;   // the doors must be seen "not ready" once before they can fire again
+        if (floors == null || floors.Length == 0) return;
+
+        int active = Mathf.Clamp(floor - 1, 0, floors.Length - 1);
+        for (int i = 0; i < floors.Length; i++)
+        {
+            FloorLink row = floors[i];
+            if (row == null) continue;
+
+            FloorDoor.ClearAll(row.doors);
+
+            if (row.rooms == null) continue;
+            for (int r = 0; r < row.rooms.Length; r++)
+            {
+                if (row.rooms[r] != null) row.rooms[r].SetFloorActive(i == active);
+            }
+        }
+    }
+
+    // Once, when the scene starts: warns about doors no floor lists (they would do nothing) and, with logging on, prints what is linked to what.
+    private void CheckWiring()
+    {
+        if (floors == null || floors.Length == 0)
+        {
+            WarnOnce("nofloorlist", "FloorController: the Floors list is empty. Add one element per floor and link its spawn points, doors and pillar rooms in it.");
+            return;
+        }
+
+        FloorDoor[] everyDoor = FindObjectsByType<FloorDoor>(FindObjectsSortMode.None);
+        for (int i = 0; i < everyDoor.Length; i++)
+        {
+            if (!IsListed(everyDoor[i]))
+            {
+                Debug.LogWarning("FloorController: door '" + everyDoor[i].name + "' is not in any floor's Doors list, so it does nothing. " +
+                                 "Drag it into the Doors list of the floor it belongs to.", everyDoor[i]);
+            }
+        }
+
+        if (!logTileUnderPlayer) return;
+        for (int i = 0; i < floors.Length; i++)
+        {
+            FloorLink row = floors[i];
+            if (row == null) continue;
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append("FloorController: floor ").Append(i + 1).Append(string.IsNullOrEmpty(row.label) ? "" : " (" + row.label + ")").Append(" is linked to ");
+
+            int nextDoors = 0;
+            int shopDoors = 0;
+            if (row.doors != null)
+            {
+                for (int d = 0; d < row.doors.Length; d++)
+                {
+                    if (row.doors[d] == null) continue;
+                    if (row.doors[d].Action == FloorDoor.DoorAction.Shop) shopDoors++;
+                    else nextDoors++;
+                }
+            }
+            sb.Append(nextDoors).Append(" door(s)");
+            if (shopDoors > 0) sb.Append(" + ").Append(shopDoors).Append(" Shop door(s)");
+
+            if (row.rooms == null || row.rooms.Length == 0) sb.Append(", no pillar rooms.");
+            else
+            {
+                sb.Append(", rooms: ");
+                for (int r = 0; r < row.rooms.Length; r++)
+                {
+                    PillarRoom room = row.rooms[r];
+                    if (r > 0) sb.Append("; ");
+                    if (room == null) sb.Append("(empty slot)");
+                    else sb.Append("'").Append(room.name).Append("' (").Append(room.AltarCount).Append(" altar(s), ").Append(room.PillarCount).Append(" pillar(s))");
+                }
+            }
+            Debug.Log(sb.ToString(), this);
+        }
+    }
+
+    private bool IsListed(FloorDoor door)
+    {
+        for (int i = 0; i < floors.Length; i++)
+        {
+            FloorLink row = floors[i];
+            if (row == null || row.doors == null) continue;
+            if (System.Array.IndexOf(row.doors, door) >= 0) return true;
+        }
+        return false;
     }
 
     /// <summary>Takes every player down one floor with the full change (black screen, move, new foes). Doors call this;
@@ -526,6 +659,7 @@ public class FloorController : MonoBehaviour
             CurrentFloor = floor;
         }
         MovePlayersToFloor(floor);
+        ApplyActiveFloor(CurrentFloor);   // the next floor's doors and rooms go live, the old ones go quiet
         FloorChanged?.Invoke(CurrentFloor);
 
         yield return new WaitForSecondsRealtime(holdTime);
@@ -581,23 +715,23 @@ public class FloorController : MonoBehaviour
     // Moves every player that exists to THEIR OWN point for this floor.
     private void MovePlayersToFloor(int floor)
     {
-        if (floorSpawns == null || floorSpawns.Length == 0)
+        if (floors == null || floors.Length == 0)
         {
-            WarnOnce("nofloors", "FloorController: the Floor Spawns list is empty, so the players stay where they are on the new floor.");
+            WarnOnce("nofloors", "FloorController: the Floors list is empty, so the players stay where they are on the new floor.");
             return;
         }
 
         int index = floor - 1;
-        if (index >= floorSpawns.Length)
+        if (index >= floors.Length)
         {
-            WarnOnce("deep" + floor, "FloorController: floor " + floor + " has no row of its own in Floor Spawns (the list has " +
-                                     floorSpawns.Length + "), so the last row is reused.");
+            WarnOnce("deep" + floor, "FloorController: floor " + floor + " has no row of its own in Floors (the list has " +
+                                     floors.Length + "), so the last row is reused.");
         }
-        int rowIndex = Mathf.Clamp(index, 0, floorSpawns.Length - 1);
-        FloorSpawn row = floorSpawns[rowIndex];
+        int rowIndex = Mathf.Clamp(index, 0, floors.Length - 1);
+        FloorLink row = floors[rowIndex];
         if (row == null)
         {
-            WarnOnce("nullrow" + rowIndex, "FloorController: Floor Spawns element " + rowIndex + " (floor " + floor + ") is empty, so the players were not moved.");
+            WarnOnce("nullrow" + rowIndex, "FloorController: Floors element " + rowIndex + " (floor " + floor + ") is empty, so the players were not moved.");
             return;
         }
 
@@ -612,13 +746,13 @@ public class FloorController : MonoBehaviour
                 spawn = row.For(1);
                 if (spawn != null)
                 {
-                    WarnOnce("fallback" + rowIndex + "_" + n, "FloorController: Floor Spawns element " + rowIndex + " has no point for Player " + n +
+                    WarnOnce("fallback" + rowIndex + "_" + n, "FloorController: Floors element " + rowIndex + " has no point for Player " + n +
                                                               ", so Player " + n + " lands on Player 1's point.");
                 }
             }
             if (spawn == null)
             {
-                WarnOnce("missing" + rowIndex + "_" + n, "FloorController: Floor Spawns element " + rowIndex + " has no point for Player " + n +
+                WarnOnce("missing" + rowIndex + "_" + n, "FloorController: Floors element " + rowIndex + " has no point for Player " + n +
                                                          " (and none for Player 1 to fall back on), so that player was not moved. Drag an empty object into that slot.");
                 continue;
             }
