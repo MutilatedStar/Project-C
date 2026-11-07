@@ -45,6 +45,7 @@ public class PlayerEffects : MonoBehaviour
     private SpriteRenderer sprite;
     private bool platformer;
     private bool tinting;
+    private PlayerGlow glow;
     private Color baseColor = Color.white;
     private float speedMultiplier = 1f;
 
@@ -236,8 +237,16 @@ public class PlayerEffects : MonoBehaviour
         else if (invincible && !tinting)
         {
             tinting = true;
-            if (sprite != null) baseColor = sprite.color;
+            if (sprite != null) baseColor = CleanSpriteColor();
         }
+    }
+
+    // The sprite's own colour. With a PlayerGlow on the player, sprite.color has the player's tint mixed in, so ask the glow for the clean
+    // colour: the gold pulse and the colour it returns to then never carry the tint around (the glow adds it back on top, every frame).
+    private Color CleanSpriteColor()
+    {
+        if (glow == null) glow = GetComponent<PlayerGlow>();
+        return glow != null ? glow.BaseColor : sprite.color;
     }
 
     // A slow gold pulse, speeding up in the last two seconds so the player can see it is about to run out.

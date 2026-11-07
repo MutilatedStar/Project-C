@@ -227,6 +227,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1314684537}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1314684541}
   m_SourcePrefab: {fileID: 100100000, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
 --- !u!4 &29989951 stripped
 Transform:
@@ -14077,6 +14080,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1039362052}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1039362056}
   m_SourcePrefab: {fileID: 100100000, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
 --- !u!1 &1039362042 stripped
 GameObject:
@@ -14545,6 +14551,31 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Ilumisoft.HealthSystem.CoopHealth
   maxHealth: 100
   initialRatio: 1
+--- !u!114 &1039362056
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1039362042}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3ec15f1470a228242a3b22984d5b795c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerGlow
+  showInSinglePlayer: 0
+  player1Color: {r: 0.25, g: 0.55, b: 1, a: 1}
+  player2Color: {r: 1, g: 0.6, b: 0.15, a: 1}
+  player3Color: {r: 0.35, g: 0.9, b: 0.4, a: 1}
+  player4Color: {r: 0.75, g: 0.4, b: 0.95, a: 1}
+  sprite: {fileID: 0}
+  tintStrength: 0.65
+  colourSpeed: 10
+  halo: 1
+  haloStrength: 0
+  haloSize: 1
+  haloPulse: 0
+  haloPulseSpeed: 3
 --- !u!1 &1042535565
 GameObject:
   m_ObjectHideFlags: 0
@@ -16302,6 +16333,31 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Ilumisoft.HealthSystem.CoopHealth
   maxHealth: 100
   initialRatio: 1
+--- !u!114 &1314684541
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1314684519}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3ec15f1470a228242a3b22984d5b795c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerGlow
+  showInSinglePlayer: 0
+  player1Color: {r: 0.25, g: 0.55, b: 1, a: 1}
+  player2Color: {r: 1, g: 0.6, b: 0.15, a: 1}
+  player3Color: {r: 0.35, g: 0.9, b: 0.4, a: 1}
+  player4Color: {r: 0.75, g: 0.4, b: 0.95, a: 1}
+  sprite: {fileID: 0}
+  tintStrength: 0.65
+  colourSpeed: 10
+  halo: 1
+  haloStrength: 0
+  haloSize: 1
+  haloPulse: 0
+  haloPulseSpeed: 3
 --- !u!1 &1356870079
 GameObject:
   m_ObjectHideFlags: 0
@@ -17400,6 +17456,118 @@ SpriteRenderer:
   m_WasSpriteAssigned: 1
   m_SpriteSortPoint: 0
   m_BlendShapeWeights: []
+--- !u!1 &1436131600
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1436131602}
+  - component: {fileID: 1436131601}
+  m_Layer: 0
+  m_Name: HazardTileFx
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1436131601
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1436131600}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 71d987eae440c334ab58e6ddda00d36e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HazardTileFx
+  effectsEnabled: 1
+  glowEnabled: 1
+  particlesEnabled: 1
+  soundEnabled: 1
+  glowOverCharacters: 1
+  lava:
+    enabled: 1
+    glow: 1
+    glowColour: {r: 1, g: 0.42, b: 0.08, a: 1}
+    glowHighlight: {r: 1, g: 0.78, b: 0.3, a: 1}
+    glowStrength: 1
+    glowPulse: 0.35
+    glowPulseSeconds: 3.5
+    ambientLevel: 3
+    walkingLevel: 3
+    fallbackColour: {r: 1, g: 0.5, b: 0.1, a: 1}
+    sound: 1
+    stepClips: []
+    splashClips: []
+    volume: {x: 0.6, y: 0.9}
+    pitch: {x: 0.92, y: 1.08}
+  water:
+    enabled: 1
+    glow: 1
+    glowColour: {r: 0.25, g: 0.65, b: 1, a: 1}
+    glowHighlight: {r: 0.6, g: 0.92, b: 1, a: 1}
+    glowStrength: 0.18
+    glowPulse: 0.35
+    glowPulseSeconds: 3.5
+    ambientLevel: 3
+    walkingLevel: 3
+    fallbackColour: {r: 0.5, g: 0.8, b: 1, a: 1}
+    sound: 1
+    stepClips: []
+    splashClips: []
+    volume: {x: 0.6, y: 0.9}
+    pitch: {x: 0.92, y: 1.08}
+  glowShader: {fileID: 4800000, guid: e76cfec213a1a9a4aa5aba968356f6b5, type: 3}
+  glowMaterial: {fileID: 2100000, guid: e3265ab4bf004d28a9537516768c1c75, type: 3}
+  glowEdgeSoftness: 0.6
+  glowTexelsPerTile: 8
+  glowBands: 8
+  pixelsPerUnit: 32
+  maxPieces: 64
+  pieceSizePixels: {x: 2, y: 3.5}
+  hopDistancePixels: {x: 6, y: 18}
+  hopHeightPixels: {x: 5, y: 12}
+  fadeStartsAt: 0.5
+  ambientSecondsBetween: {x: 0, y: 0}
+  ambientHopSeconds: {x: 1, y: 1.8}
+  stepPieces: {x: 2, y: 4}
+  splashPieces: {x: 5, y: 8}
+  walkingHopSeconds: {x: 0.5, y: 0.9}
+  stepDistance: 0.6
+  minStepSeconds: 0.15
+  spatialBlend: 0
+  mixerGroup: {fileID: 0}
+  wallTilemaps:
+  - {fileID: 382735585}
+  wallMask:
+    serializedVersion: 2
+    m_Bits: 0
+  wallPadding: 0.1
+  sortingOrdersAbovePlayers: 2
+  logSetup: 1
+  fallbackLavaName: lava
+  fallbackWaterName: water
+  rescanSeconds: 1
+--- !u!4 &1436131602
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1436131600}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 473.8758, y: 622.6237, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1463844255
 GameObject:
   m_ObjectHideFlags: 0
@@ -61349,3 +61517,4 @@ SceneRoots:
   - {fileID: 1836249735}
   - {fileID: 544037605}
   - {fileID: 814792779}
+  - {fileID: 1436131602}
