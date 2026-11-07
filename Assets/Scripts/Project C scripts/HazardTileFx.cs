@@ -9,17 +9,23 @@ using Ilumisoft.HealthSystem;
 /// <summary>
 /// The look and sound of lava and water tiles. Put it on ONE empty object in the scene (FloorManager finds the same tiles
 /// it hurts with, so what glows is exactly what burns). It builds everything else by itself: no prefabs, nothing to wire up
-/// except the sound clips.
+/// except the sound clips and (once) the glow shader.
 ///
-///   GLOW        a soft, slowly breathing glow over every lava / water tile. It is baked from the tile shapes, so it fades out
-///               toward the edge of the pool and can NEVER spill onto a neighbouring floor or wall tile. It is drawn in front of
-///               the characters, so a player standing in lava is lit by it too.
+///   GLOW        a fake light for a top-down sprite game. Two soft layers of light, baked from the tile shapes, are laid over every
+///               lava / water pool and ADDED to what is underneath (that is what makes it look like light and not like a coat of
+///               paint). One layer is the main colour, the other a brighter highlight colour, and they breathe out of step, so
+///               bright patches seem to drift across the pool. It fades to nothing at the edge of the pool and can NEVER spill onto
+///               a neighbouring floor or wall tile. It is drawn in front of the characters, so a player standing in lava is lit by it.
+///               Needs HazardGlow.shader (see "Glow Shader"). Without it a plain, weaker overlay is used.
 ///   PARTICLES   small square pieces that take the colour of a random pixel of the tile's own sprite and hop out of the tile:
-///               slowly, at random times, with no help from anybody (AMBIENT), and more of them while a player walks on it
-///               (WALKING), plus a small splash when a player steps in. Every kind has its own level: Off / Low / Medium / High.
+///               slowly, at random times, with no help from anybody (AMBIENT); a few on EVERY STEP a player takes on it; and a
+///               bigger splash when a player steps in. Every kind has its own level: Off / Low / Medium / High.
 ///               Pieces are drawn in front of the characters, but they never land on or pass over a wall.
-///   SOUND       a step sound every so often while a player moves over lava or water, and a splash sound when they step in.
-///               Drop clips into "Step Clips" / "Splash Clips" on Lava and Water; one is picked at random each time.
+///   SOUND       a step sound on every step over lava or water, and a splash sound when they step in. Put clips into
+///               "Step Clips" / "Splash Clips" on Lava and Water; one is picked at random each time. If only one of the two lists
+///               has clips, it is used for both.
+///
+/// A STEP is a fixed distance walked on the tile (see "Step Distance"), so running makes quicker steps, standing still makes none.
 ///
 /// Every part has its own switch. All of them can be changed while the game runs, or from code on this component
 /// (for example from a settings menu): EffectsEnabled, GlowEnabled, ParticlesEnabled, SoundEnabled.
@@ -30,10 +36,15 @@ using Ilumisoft.HealthSystem;
 /// ONLINE multiplayer keeps running behind the pause menu (PauseManager.IsFrozen is false there), the same as the foes do.
 /// You can also drag this component into PauseManager's "World Scripts": it holds still when switched off too.
 ///
-/// WALLS AND LAYERS: the effects are drawn on the players' sorting layer, one order above the highest player, so pieces and glow
+/// WALLS AND LAYERS: the effects are drawn on the players' sorting layer, a little above the highest player, so pieces and glow
 /// can go in front of the characters. Walls are found by themselves (Tilemaps with a solid Tilemap Collider 2D); a piece is never
 /// started in a wall or sent through one, and the glow has no tiles under walls. If a wall Tilemap is drawn in front of the players,
-/// the effects are kept one order below it. Not found right? Fill in "Wall Tilemaps" and / or "Wall Mask".
+/// the effects are kept just below it. If something that is not a wall gets taken for one (a player stands on lava "inside" it),
+/// it is dropped from the walls after half a second and a warning tells you which Tilemap it was. Fill in "Wall Tilemaps" and / or
+/// "Wall Mask" to set the walls yourself.
+///
+/// If something does not show up, look at the one line this script writes to the Console when it starts: it says how many lava and
+/// water tiles it found, which Tilemaps count as walls, where it draws and whether the glow shader was found.
 ///
 /// Sprite textures do NOT need Read/Write enabled: if a texture can't be read directly, the colours are read back from the GPU.
 /// Test: in Play mode, right-click this component's header > "Rebuild Now" after you change tiles by hand.
@@ -54,13 +65,15 @@ public class HazardTileFx : MonoBehaviour
         public bool enabled = true;
 
         [Header("Glow")]
-        [Tooltip("The soft glow over the tiles.")]
+        [Tooltip("The fake light over the tiles.")]
         public bool glow = true;
-        [Tooltip("The colour of the glow (its alpha is ignored: use Glow Strength).")]
+        [Tooltip("The main colour of the light.")]
         public Color glowColour = Color.white;
-        [Tooltip("How strong the glow is at its brightest. Keep it low for a soft look.")]
-        [Range(0f, 1f)] public float glowStrength = 0.2f;
-        [Tooltip("How much the glow breathes. 0 = steady, 1 = fades almost out and back.")]
+        [Tooltip("The second, brighter colour of the light. It shimmers in and out over the main colour.")]
+        public Color glowHighlight = Color.white;
+        [Tooltip("How strong the light is at its brightest. With the additive shader 0.3 to 0.7 looks good. Higher = hotter.")]
+        [Range(0f, 1f)] public float glowStrength = 0.5f;
+        [Tooltip("How much the whole glow breathes. 0 = steady, 1 = fades almost out and back.")]
         [Range(0f, 1f)] public float glowPulse = 0.35f;
         [Tooltip("Seconds for one slow breath of the glow.")]
         [Min(0.2f)] public float glowPulseSeconds = 3.5f;
@@ -68,7 +81,7 @@ public class HazardTileFx : MonoBehaviour
         [Header("Particles")]
         [Tooltip("How often a piece hops out of the tiles on its own (slow, at random times). Only tiles on screen are used.")]
         public FxLevel ambientLevel = FxLevel.Medium;
-        [Tooltip("How many pieces hop while a player WALKS on this tile, and how big the splash is when they step in.")]
+        [Tooltip("How many pieces pop out on every STEP on this tile, and how big the splash is when a player steps in.")]
         public FxLevel walkingLevel = FxLevel.Medium;
         [Tooltip("The colour of a piece if the tile's sprite pixels can't be read at all.")]
         public Color fallbackColour = Color.white;
@@ -76,9 +89,9 @@ public class HazardTileFx : MonoBehaviour
         [Header("Sound")]
         [Tooltip("Step sound and splash sound on or off for this tile.")]
         public bool sound = true;
-        [Tooltip("Played now and then while a player walks over this tile. One is picked at random. Empty = silent.")]
+        [Tooltip("Played on every step on this tile. One is picked at random. Empty = the splash clips are used; both empty = silent.")]
         public AudioClip[] stepClips;
-        [Tooltip("Played when a player steps onto this tile. Empty = a step clip is used instead.")]
+        [Tooltip("Played when a player steps onto this tile. Empty = the step clips are used.")]
         public AudioClip[] splashClips;
         [Tooltip("Random volume between these two.")]
         public Vector2 volume = new Vector2(0.6f, 0.9f);
@@ -91,9 +104,9 @@ public class HazardTileFx : MonoBehaviour
     [Header("Switches (can be changed while playing)")]
     [Tooltip("Master switch. Off = no glow, no particles, no sound.")]
     [SerializeField] private bool effectsEnabled = true;
-    [Tooltip("The soft glow over the tiles.")]
+    [Tooltip("The fake light over the tiles.")]
     [SerializeField] private bool glowEnabled = true;
-    [Tooltip("The pieces that hop out of the tiles (ambient and walking).")]
+    [Tooltip("The pieces that hop out of the tiles (ambient, steps and splash).")]
     [SerializeField] private bool particlesEnabled = true;
     [Tooltip("Step and splash sounds.")]
     [SerializeField] private bool soundEnabled = true;
@@ -104,26 +117,33 @@ public class HazardTileFx : MonoBehaviour
     [Header("Lava")]
     [SerializeField] private Look lava = new Look
     {
-        glowColour = new Color(1f, 0.42f, 0.08f),
-        glowStrength = 0.22f,
+        glowColour = new Color(1f, 0.38f, 0.05f),
+        glowHighlight = new Color(1f, 0.78f, 0.3f),
+        glowStrength = 0.55f,
         fallbackColour = new Color(1f, 0.5f, 0.1f)
     };
 
     [Header("Water")]
     [SerializeField] private Look water = new Look
     {
-        glowColour = new Color(0.25f, 0.65f, 1f),
-        glowStrength = 0.18f,
+        glowColour = new Color(0.15f, 0.45f, 0.9f),
+        glowHighlight = new Color(0.6f, 0.92f, 1f),
+        glowStrength = 0.4f,
         fallbackColour = new Color(0.5f, 0.8f, 1f)
     };
 
-    [Header("Glow shape")]
+    [Header("Glow shape and look")]
+    [Tooltip("The additive glow shader (HazardGlow.shader). It is filled in by itself in the Editor when it is in your project. " +
+             "Leave it in the field so it is included in builds. Empty and not found = a plain, weaker overlay instead.")]
+    [SerializeField] private Shader glowShader;
+    [Tooltip("Optional. Use your own material for the glow instead of the shader above (for example another additive sprite material).")]
+    [SerializeField] private Material glowMaterial;
     [Tooltip("How far the glow fades in from the edge of a pool, in tiles. 0 = a hard edge. Small pools glow less when this is big.")]
     [SerializeField, Range(0f, 1.5f)] private float glowEdgeSoftness = 0.6f;
     [Tooltip("Resolution of the baked glow, in pixels per tile. Higher is smoother but uses more memory.")]
     [SerializeField, Range(2, 16)] private int glowTexelsPerTile = 8;
-    [Tooltip("Optional. Give the glow its own material, for example an additive sprite material for a brighter, hotter look. Empty = the normal sprite material.")]
-    [SerializeField] private Material glowMaterial;
+    [Tooltip("0 = smooth light. 3 to 8 = the light is cut into that many hard steps of brightness, which suits pixel art.")]
+    [SerializeField, Range(0, 8)] private int glowBands = 0;
 
     [Header("Particles: the hop")]
     [Tooltip("Pixels per Unity unit of your sprites (Pixel Art Top Down uses 32). Sizes, distances and heights below are in pixels.")]
@@ -145,21 +165,19 @@ public class HazardTileFx : MonoBehaviour
     [Tooltip("How long an ambient hop lasts, in seconds. Long = slow and floaty.")]
     [SerializeField] private Vector2 ambientHopSeconds = new Vector2(1f, 1.8f);
 
-    [Header("Particles: walking")]
-    [Tooltip("Seconds between two hops while a player is walking on the tile, at Medium.")]
-    [SerializeField] private Vector2 walkingSecondsBetween = new Vector2(0.15f, 0.35f);
-    [Tooltip("How long a walking hop lasts, in seconds.")]
-    [SerializeField] private Vector2 walkingHopSeconds = new Vector2(0.5f, 0.9f);
+    [Header("Particles: steps and splash")]
+    [Tooltip("How many pieces pop out on every step, at Medium (random between the two).")]
+    [SerializeField] private Vector2Int stepPieces = new Vector2Int(2, 4);
     [Tooltip("How many pieces the splash has when a player steps onto the tile, at Medium (random between the two).")]
     [SerializeField] private Vector2Int splashPieces = new Vector2Int(5, 8);
+    [Tooltip("How long a step or splash hop lasts, in seconds.")]
+    [SerializeField] private Vector2 walkingHopSeconds = new Vector2(0.5f, 0.9f);
 
-    [Header("Walking (sound and particles)")]
-    [Tooltip("A player counts as walking when they move faster than this (units per second).")]
-    [SerializeField, Min(0f)] private float minWalkSpeed = 0.4f;
-    [Tooltip("A step sound plays every time a player has moved this far over the tile (world units), so running faster means quicker steps.")]
-    [SerializeField, Min(0.05f)] private float stepDistance = 0.6f;
-    [Tooltip("Step sounds never come closer together than this (seconds).")]
-    [SerializeField, Min(0f)] private float minStepSeconds = 0.15f;
+    [Header("Steps (sound and particles)")]
+    [Tooltip("One step is this far walked over the tile (world units). Every step plays a sound and pops pieces. Smaller = quicker steps.")]
+    [SerializeField, Min(0.05f)] private float stepDistance = 0.5f;
+    [Tooltip("Steps never come closer together than this (seconds).")]
+    [SerializeField, Min(0f)] private float minStepSeconds = 0.12f;
     [Tooltip("0 = plays at full volume everywhere (right for a 2D game), 1 = fades with distance from the AudioListener.")]
     [SerializeField, Range(0f, 1f)] private float spatialBlend = 0f;
     [Tooltip("Optional. Send the sounds through this Audio Mixer group (e.g. your SFX group) so the volume sliders affect them.")]
@@ -176,6 +194,8 @@ public class HazardTileFx : MonoBehaviour
     [SerializeField, Min(1)] private int sortingOrdersAbovePlayers = 2;
 
     [Header("Housekeeping")]
+    [Tooltip("Writes one line to the Console describing what was found (tile counts, walls, layers, glow shader). Handy when something doesn't show up.")]
+    [SerializeField] private bool logSetup = true;
     [Tooltip("Only used when there is no FloorManager in the scene: a tile is lava when its name contains this.")]
     [SerializeField] private string fallbackLavaName = "lava";
     [Tooltip("Only used when there is no FloorManager in the scene: a tile is water when its name contains this.")]
@@ -197,15 +217,53 @@ public class HazardTileFx : MonoBehaviour
         dirty = true;
     }
 
+#if UNITY_EDITOR
+    // In the Editor the glow shader is picked up by itself (by name), so there is nothing to drag in. The reference stays
+    // in the field, which is what gets the shader into a build.
+    private void Reset()
+    {
+        FindGlowShaderInEditor();
+    }
+
+    private void OnValidate()
+    {
+        if (!Application.isPlaying) FindGlowShaderInEditor();
+    }
+
+    private void FindGlowShaderInEditor()
+    {
+        if (glowShader != null) return;
+
+        Shader found = Shader.Find(GlowShaderName);
+        if (found == null) return;
+
+        glowShader = found;
+        UnityEditor.EditorUtility.SetDirty(this);
+    }
+#endif
+
     // ------------------------------------------------------------ state
 
+    private const string GlowShaderName = "Sprites/Hazard Glow Additive";
     private const int Lava = 0;
     private const int Water = 1;
     private const int None = -1;
     private const int KindCount = 2;
     private const int MaxPlayers = 4;
+    private const int GlowLayers = 2;              // the main layer and the highlight layer
     private const float TeleportDistance = 1.5f;   // moving further than this in one frame is a teleport, not a step
+    private const float MinMove = 0.002f;          // smaller moves are physics jitter, not walking
     private const float GlowEdgeGain = 2.5f;       // how quickly the baked glow reaches full strength inside a pool
+    private const float WallDoubtSeconds = 0.5f;   // a "wall" a player stands in for this long is not a wall
+
+    // One layer of baked light over a pool.
+    private class GlowLayer
+    {
+        public GameObject go;
+        public SpriteRenderer sr;
+        public Texture2D tex;
+        public Sprite sprite;
+    }
 
     // All the hazard tiles of ONE Tilemap that are one kind (lava or water), and the glow made for them.
     private class Pool
@@ -217,10 +275,7 @@ public class HazardTileFx : MonoBehaviour
         public readonly List<Vector3Int> cells = new List<Vector3Int>();
         public readonly HashSet<Vector3Int> set = new HashSet<Vector3Int>();
         public readonly List<Vector3Int> visible = new List<Vector3Int>();
-        public GameObject glowObject;
-        public SpriteRenderer glowRenderer;
-        public Texture2D glowTexture;
-        public Sprite glowSprite;
+        public readonly GlowLayer[] layers = new GlowLayer[GlowLayers];
     }
 
     // One piece hopping out of a tile.
@@ -242,7 +297,8 @@ public class HazardTileFx : MonoBehaviour
         public int kind = None;
         public float distance;
         public float lastStepTime = -10f;
-        public float hopTimer;
+        public Tilemap doubtMap;   // an automatically found "wall" this player is standing in...
+        public float doubt;        // ...and for how long
     }
 
     // One sprite's pixels (cached, so a tile that is picked a hundred times is only read once).
@@ -266,6 +322,7 @@ public class HazardTileFx : MonoBehaviour
 
     private readonly List<Pool> pools = new List<Pool>();
     private readonly List<Tilemap> wallMaps = new List<Tilemap>();
+    private readonly HashSet<Tilemap> notWalls = new HashSet<Tilemap>();
     private readonly Dictionary<TileBase, int> tileKinds = new Dictionary<TileBase, int>();
     private readonly Dictionary<Sprite, int> spriteKinds = new Dictionary<Sprite, int>();
     private readonly Collider2D[] wallBuffer = new Collider2D[1];
@@ -279,6 +336,12 @@ public class HazardTileFx : MonoBehaviour
     private int activeHops;
     private AudioSource[] sources;
     private int nextSource;
+
+    private Material builtGlowMaterial;
+    private bool glowMaterialTried;
+    private bool glowIsAdditive;
+    private bool autoWalls;
+    private string lastLog;
 
     private string lavaName = "lava";
     private string waterName = "water";
@@ -320,6 +383,7 @@ public class HazardTileFx : MonoBehaviour
     private void OnDestroy()
     {
         DestroyPools();
+        if (builtGlowMaterial != null) Destroy(builtGlowMaterial);
         if (root != null) Destroy(root);
     }
 
@@ -480,12 +544,14 @@ public class HazardTileFx : MonoBehaviour
         }
 
         FindWalls(all);
+        GlowMaterial();   // looks the shader up now so the setup line can say what it found
 
         for (int i = 0; i < pools.Count; i++) BakeGlow(pools[i]);
 
         RefreshSorting();
         ApplySorting();
         RefreshVisible();
+        LogSetup();
     }
 
     // Finds every lava and water tile of one Tilemap.
@@ -579,6 +645,7 @@ public class HazardTileFx : MonoBehaviour
 
         if (wallTilemaps != null && wallTilemaps.Length > 0)
         {
+            autoWalls = false;
             for (int i = 0; i < wallTilemaps.Length; i++)
             {
                 if (wallTilemaps[i] != null) wallMaps.Add(wallTilemaps[i]);
@@ -586,10 +653,11 @@ public class HazardTileFx : MonoBehaviour
         }
         else
         {
+            autoWalls = true;
             for (int i = 0; i < all.Length; i++)
             {
                 Tilemap m = all[i];
-                if (m == null || !m.gameObject.activeInHierarchy || IsPoolMap(m)) continue;
+                if (m == null || !m.gameObject.activeInHierarchy || IsPoolMap(m) || notWalls.Contains(m)) continue;
                 if (HasSolidCollider(m)) wallMaps.Add(m);
             }
         }
@@ -613,8 +681,8 @@ public class HazardTileFx : MonoBehaviour
         get { return wallMaps.Count > 0 || wallMask.value != 0; }
     }
 
-    // True if this exact point is inside a wall.
-    private bool IsWallAt(Vector2 p)
+    // The wall Tilemap that has a tile on this exact point, or null.
+    private Tilemap WallMapAt(Vector2 p)
     {
         for (int i = 0; i < wallMaps.Count; i++)
         {
@@ -623,9 +691,15 @@ public class HazardTileFx : MonoBehaviour
 
             Vector3Int c = m.WorldToCell(p);
             c.z = 0;   // a Tilemap at a different Z would otherwise look one layer off and find nothing
-            if (m.HasTile(c)) return true;
+            if (m.HasTile(c)) return m;
         }
+        return null;
+    }
 
+    // True if this exact point is inside a wall.
+    private bool IsWallAt(Vector2 p)
+    {
+        if (WallMapAt(p) != null) return true;
         if (wallMask.value != 0 && Physics2D.OverlapPoint(p, wallFilter, wallBuffer) > 0) return true;
         return false;
     }
@@ -640,6 +714,36 @@ public class HazardTileFx : MonoBehaviour
                IsWallAt(p - new Vector2(wallPadding, 0f)) ||
                IsWallAt(p + new Vector2(0f, wallPadding)) ||
                IsWallAt(p - new Vector2(0f, wallPadding));
+    }
+
+    // A player is standing on lava or water that an AUTOMATICALLY found wall says is a wall tile. Nobody can stand in a wall, so if it
+    // goes on for half a second that Tilemap is not a wall (a ground layer with a collider, say) and is dropped.
+    private void CheckWallDoubt(Walker w, Vector2 feet, float dt)
+    {
+        Tilemap claimed = autoWalls ? WallMapAt(feet) : null;
+        if (claimed == null)
+        {
+            w.doubtMap = null;
+            w.doubt = 0f;
+            return;
+        }
+
+        if (claimed != w.doubtMap)
+        {
+            w.doubtMap = claimed;
+            w.doubt = 0f;
+        }
+
+        w.doubt += dt;
+        if (w.doubt < WallDoubtSeconds) return;
+
+        notWalls.Add(claimed);
+        wallMaps.Remove(claimed);
+        w.doubtMap = null;
+        w.doubt = 0f;
+        dirty = true;   // bake the glow again, now that tile is not a wall
+        Debug.LogWarning("HazardTileFx: the Tilemap '" + claimed.name + "' has a solid collider, so it was taken for a wall, but a player is standing on lava / water " +
+                         "in it. It is not treated as a wall any more. If it should be, set the walls yourself in 'Wall Tilemaps'.", claimed);
     }
 
     // ------------------------------------------------------------ layers
@@ -730,10 +834,13 @@ public class HazardTileFx : MonoBehaviour
     {
         for (int i = 0; i < pools.Count; i++)
         {
-            SpriteRenderer sr = pools[i].glowRenderer;
-            if (sr == null) continue;
-            sr.sortingLayerID = glowLayerId;
-            sr.sortingOrder = glowOrder;
+            for (int l = 0; l < GlowLayers; l++)
+            {
+                GlowLayer g = pools[i].layers[l];
+                if (g == null || g.sr == null) continue;
+                g.sr.sortingLayerID = glowLayerId;
+                g.sr.sortingOrder = glowOrder;   // both layers share one order (they are added together, so which is on top doesn't matter)
+            }
         }
 
         if (hops == null) return;
@@ -746,9 +853,40 @@ public class HazardTileFx : MonoBehaviour
 
     // ------------------------------------------------------------ the glow
 
-    // Bakes ONE soft texture for a whole pool: white, with an alpha that is 0 outside the lava / water tiles (and under walls),
-    // fades in from the edge and varies a little from place to place. The sprite renderer only tints it. Because the alpha is 0 off
-    // the tiles, the glow cannot spill onto the floor or the walls around the pool.
+    // The material the glow is drawn with. Preferably the additive shader: adding light to the tiles (and to the characters standing on
+    // them) is what makes it look like light. Without it a plain sprite is used, which can only paint over, so it is made weaker.
+    private Material GlowMaterial()
+    {
+        if (glowMaterial != null)
+        {
+            glowIsAdditive = true;   // your own material: taken to be the additive kind
+            return glowMaterial;
+        }
+
+        if (!glowMaterialTried)
+        {
+            glowMaterialTried = true;
+
+            Shader shader = glowShader != null ? glowShader : Shader.Find(GlowShaderName);
+            if (shader != null && shader.isSupported)
+            {
+                builtGlowMaterial = new Material(shader);
+                glowIsAdditive = true;
+            }
+            else
+            {
+                // No additive shader. In URP's 2D renderer the default sprite material is LIT (a dark scene would swallow the glow),
+                // so ask for the unlit one when it exists.
+                Shader unlit = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
+                if (unlit != null && unlit.isSupported) builtGlowMaterial = new Material(unlit);
+            }
+        }
+        return builtGlowMaterial;
+    }
+
+    // Bakes TWO soft textures for a whole pool: white, with an alpha that is 0 outside the lava / water tiles (and under walls), fades in
+    // from the edge and varies from place to place (a different pattern in each). The sprite renderers only tint them. Because the alpha is
+    // 0 off the tiles, the glow cannot spill onto the floor or the walls around the pool.
     private void BakeGlow(Pool pool)
     {
         Tilemap map = pool.map;
@@ -777,7 +915,12 @@ public class HazardTileFx : MonoBehaviour
             foot[(c.y - minY) * w + (c.x - minX)] = true;
             any = true;
         }
-        if (!any) return;
+        if (!any)
+        {
+            Debug.LogWarning("HazardTileFx: every " + (pool.kind == Lava ? "lava" : "water") + " tile of the Tilemap '" + map.name +
+                             "' lies under a wall Tilemap, so it gets no glow. If that is wrong, set 'Wall Tilemaps' yourself.", this);
+            return;
+        }
 
         int k = Mathf.Clamp(glowTexelsPerTile, 2, 16);
         while (k > 2 && (w * k > 2048 || h * k > 2048)) k--;
@@ -809,48 +952,64 @@ public class HazardTileFx : MonoBehaviour
             BoxBlur(v, temp, tw, th, radius);
         }
 
-        float seedX = Random.Range(0f, 100f);
-        float seedY = Random.Range(0f, 100f);
-        Color32[] pixels = new Color32[tw * th];
-        for (int ty = 0; ty < th; ty++)
-        {
-            float worldY = minY + (ty + 0.5f) / k;
-            for (int tx = 0; tx < tw; tx++)
-            {
-                int index = ty * tw + tx;
-                float value = v[index];
-                float edge = soft ? Mathf.Clamp01((value - 0.5f) * GlowEdgeGain) : value;
-                float worldX = minX + (tx + 0.5f) / k;
-                float variation = 0.7f + 0.3f * Mathf.PerlinNoise(worldX * 0.4f + seedX, worldY * 0.4f + seedY);
-                byte alpha = (byte)Mathf.RoundToInt(Mathf.Clamp01(edge * variation) * 255f);
-                pixels[index] = new Color32(255, 255, 255, alpha);
-            }
-        }
+        // How far each texel is inside the pool, 0 at the edge and outside, 1 deep inside.
+        float[] edge = new float[v.Length];
+        for (int i = 0; i < edge.Length; i++) edge[i] = soft ? Mathf.Clamp01((v[i] - 0.5f) * GlowEdgeGain) : v[i];
 
-        Texture2D tex = new Texture2D(tw, th, TextureFormat.RGBA32, false);
-        tex.wrapMode = TextureWrapMode.Clamp;
-        tex.filterMode = soft ? FilterMode.Bilinear : FilterMode.Point;
-        tex.SetPixels32(pixels);
-        tex.Apply(false, true);
+        bool banded = glowBands >= 2;
+        Material material = GlowMaterial();
 
-        Sprite sprite = Sprite.Create(tex, new Rect(0f, 0f, tw, th), Vector2.zero, k, 0, SpriteMeshType.FullRect);
-
-        // The sprite is w x h units big (k texels per unit); scaling by the tile size lays it exactly over the tiles.
+        // Where the first tile is: the glow sprite is w x h units big (k texels per unit); scaling it by the tile size lays it over the tiles.
         Vector3 first = map.GetCellCenterWorld(new Vector3Int(minX, minY, 0));
-        GameObject go = new GameObject(pool.kind == Lava ? "Glow (lava)" : "Glow (water)");
-        go.transform.SetParent(root.transform, false);
-        go.transform.position = new Vector3(first.x - pool.cellSize.x * 0.5f, first.y - pool.cellSize.y * 0.5f, 0.01f);   // a hair behind the pieces
-        go.transform.localScale = new Vector3(pool.cellSize.x, pool.cellSize.y, 1f);
 
-        SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = sprite;
-        if (glowMaterial != null) sr.sharedMaterial = glowMaterial;
-        sr.color = new Color(1f, 1f, 1f, 0f);
+        for (int layer = 0; layer < GlowLayers; layer++)
+        {
+            float seedX = Random.Range(0f, 200f);
+            float seedY = Random.Range(0f, 200f);
 
-        pool.glowObject = go;
-        pool.glowRenderer = sr;
-        pool.glowTexture = tex;
-        pool.glowSprite = sprite;
+            Color32[] pixels = new Color32[tw * th];
+            for (int ty = 0; ty < th; ty++)
+            {
+                float worldY = minY + (ty + 0.5f) / k;
+                for (int tx = 0; tx < tw; tx++)
+                {
+                    int index = ty * tw + tx;
+                    float worldX = minX + (tx + 0.5f) / k;
+
+                    float a = Mathf.Clamp01(edge[index] * (0.3f + 0.7f * Patches(worldX, worldY, seedX, seedY)));
+                    if (banded) a = Mathf.Round(a * glowBands) / glowBands;
+                    pixels[index] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+                }
+            }
+
+            Texture2D tex = new Texture2D(tw, th, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = (soft && !banded) ? FilterMode.Bilinear : FilterMode.Point;
+            tex.SetPixels32(pixels);
+            tex.Apply(false, true);
+
+            Sprite sprite = Sprite.Create(tex, new Rect(0f, 0f, tw, th), Vector2.zero, k, 0, SpriteMeshType.FullRect);
+
+            GameObject go = new GameObject("Glow " + (layer == 0 ? "A" : "B") + (pool.kind == Lava ? " (lava)" : " (water)"));
+            go.transform.SetParent(root.transform, false);
+            go.transform.position = new Vector3(first.x - pool.cellSize.x * 0.5f, first.y - pool.cellSize.y * 0.5f, 0.02f - layer * 0.01f);   // a hair behind the pieces
+            go.transform.localScale = new Vector3(pool.cellSize.x, pool.cellSize.y, 1f);
+
+            SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = sprite;
+            if (material != null) sr.sharedMaterial = material;
+            sr.color = new Color(1f, 1f, 1f, 0f);
+
+            pool.layers[layer] = new GlowLayer { go = go, sr = sr, tex = tex, sprite = sprite };
+        }
+    }
+
+    // Soft bright and dark patches, about three tiles across with a little finer detail on top. 0..1.
+    private static float Patches(float x, float y, float seedX, float seedY)
+    {
+        float coarse = Mathf.PerlinNoise(x * 0.3f + seedX, y * 0.3f + seedY);
+        float fine = Mathf.PerlinNoise(x * 0.9f + seedX + 31f, y * 0.9f + seedY + 17f);
+        return Mathf.Clamp01(Mathf.InverseLerp(0.25f, 0.75f, 0.65f * coarse + 0.35f * fine));
     }
 
     // A blur that is fast on big grids (a sliding window). Anything outside the grid counts as 0.
@@ -888,24 +1047,44 @@ public class HazardTileFx : MonoBehaviour
         }
     }
 
+    // The two layers breathe out of step with each other: where one fades, the other brightens, so the light seems to drift over the pool.
     private void UpdateGlow()
     {
+        float weaker = glowIsAdditive ? 1f : 0.55f;   // a plain overlay can only paint over, so it needs to be softer
+
         for (int i = 0; i < pools.Count; i++)
         {
             Pool pool = pools[i];
-            if (pool.glowRenderer == null) continue;
-
             Look look = pool.kind == Lava ? lava : water;
             bool on = glowEnabled && look.enabled && look.glow && look.glowStrength > 0f;
-            pool.glowRenderer.enabled = on;
-            if (!on) continue;
 
-            float breathe = 0.5f + 0.5f * Mathf.Sin(clock * (6.2832f / look.glowPulseSeconds) + pool.phase);
-            float strength = look.glowStrength * (1f - look.glowPulse + look.glowPulse * breathe);
+            float speed = 6.2832f / look.glowPulseSeconds;
+            float envelope = 1f - look.glowPulse + look.glowPulse * (0.5f + 0.5f * Mathf.Sin(clock * speed + pool.phase));
+            float strength = look.glowStrength * envelope * weaker;
+            float mainWave = 0.5f + 0.5f * Mathf.Sin(clock * speed * 1.3f + pool.phase * 2f);
+            float highlightWave = 0.5f + 0.5f * Mathf.Sin(clock * speed * 1.0f + pool.phase * 2f + 2.4f);
 
-            Color c = look.glowColour;
-            c.a = Mathf.Clamp01(strength);
-            pool.glowRenderer.color = c;
+            for (int l = 0; l < GlowLayers; l++)
+            {
+                GlowLayer g = pool.layers[l];
+                if (g == null || g.sr == null) continue;
+
+                g.sr.enabled = on;
+                if (!on) continue;
+
+                Color c;
+                if (l == 0)
+                {
+                    c = look.glowColour;
+                    c.a = Mathf.Clamp01(strength * (0.5f + 0.5f * mainWave));
+                }
+                else
+                {
+                    c = look.glowHighlight;
+                    c.a = Mathf.Clamp01(strength * 0.9f * highlightWave);
+                }
+                g.sr.color = c;
+            }
         }
     }
 
@@ -913,12 +1092,46 @@ public class HazardTileFx : MonoBehaviour
     {
         for (int i = 0; i < pools.Count; i++)
         {
-            Pool pool = pools[i];
-            if (pool.glowObject != null) Destroy(pool.glowObject);
-            if (pool.glowSprite != null) Destroy(pool.glowSprite);
-            if (pool.glowTexture != null) Destroy(pool.glowTexture);
+            for (int l = 0; l < GlowLayers; l++)
+            {
+                GlowLayer g = pools[i].layers[l];
+                if (g == null) continue;
+                if (g.go != null) Destroy(g.go);
+                if (g.sprite != null) Destroy(g.sprite);
+                if (g.tex != null) Destroy(g.tex);
+            }
         }
         pools.Clear();
+    }
+
+    // One line in the Console saying what was found, but only when it differs from the last one.
+    private void LogSetup()
+    {
+        if (!logSetup) return;
+
+        int lavaTiles = 0;
+        int waterTiles = 0;
+        for (int i = 0; i < pools.Count; i++)
+        {
+            if (pools[i].kind == Lava) lavaTiles += pools[i].cells.Count;
+            else waterTiles += pools[i].cells.Count;
+        }
+
+        List<string> walls = new List<string>();
+        for (int i = 0; i < wallMaps.Count; i++)
+        {
+            if (wallMaps[i] != null) walls.Add(wallMaps[i].name);
+        }
+
+        string message = "HazardTileFx: found " + lavaTiles + " lava and " + waterTiles + " water tile(s)" +
+                         (lavaTiles + waterTiles == 0 ? " (nothing matched: check the tile names, see FloorManager's Lava Name / Water Name)" : "") +
+                         ". Walls: " + (walls.Count == 0 ? "none" : string.Join(", ", walls.ToArray())) + (autoWalls ? " (found by themselves)" : " (set by hand)") +
+                         ". Drawn on sorting layer '" + SortingLayer.IDToName(pieceLayerId) + "', glow at order " + glowOrder + ", pieces at order " + pieceOrder +
+                         ". Glow: " + (glowIsAdditive ? "additive" : "plain overlay (no glow shader found, see 'Glow Shader')") + ".";
+
+        if (message == lastLog) return;
+        lastLog = message;
+        Debug.Log(message, this);
     }
 
     // ------------------------------------------------------------ what is on screen
@@ -1071,59 +1284,69 @@ public class HazardTileFx : MonoBehaviour
                 if (kind != None && !first && !teleported) Splash(pool, cell, feet);
                 w.kind = kind;
                 w.distance = 0f;
-                w.hopTimer = 0f;
             }
-            if (kind == None) continue;
 
-            bool moving = dt > 0f && moved / dt >= minWalkSpeed;
-            if (!moving) continue;
+            if (kind == None)
+            {
+                w.doubtMap = null;
+                w.doubt = 0f;
+                continue;
+            }
 
-            Look look = kind == Lava ? lava : water;
+            CheckWallDoubt(w, feet, dt);
 
-            w.distance += moved;
+            // Every time the player has walked one "Step Distance" over the tile, that is a step. No speed limit to pass: positions
+            // that only change in physics steps (so some frames show no movement at all) still add up to the right distance.
+            if (moved > MinMove) w.distance += moved;
             if (w.distance >= stepDistance && Time.time - w.lastStepTime >= minStepSeconds)
             {
-                w.distance = 0f;
+                w.distance = (w.distance - stepDistance > stepDistance) ? 0f : w.distance - stepDistance;
                 w.lastStepTime = Time.time;
-                PlaySound(look, look.stepClips, feet);
-            }
-
-            float level = Multiplier(look.walkingLevel);
-            if (particlesEnabled && level > 0f)
-            {
-                w.hopTimer -= dt;
-                if (w.hopTimer <= 0f)
-                {
-                    w.hopTimer = RollFloat(walkingSecondsBetween) / level;
-                    WalkingHop(pool, cell, feet);
-                }
+                Step(pool, cell, feet);
             }
         }
+    }
+
+    // One step on lava or water: a sound and a few pieces.
+    private void Step(Pool pool, Vector3Int cell, Vector2 feet)
+    {
+        Look look = pool.kind == Lava ? lava : water;
+        PlaySound(look, ClipsFor(look, false), feet);
+        EmitPieces(pool, cell, feet, RollInt(stepPieces), Multiplier(look.walkingLevel));
     }
 
     // A player has just stepped onto lava or water.
     private void Splash(Pool pool, Vector3Int cell, Vector2 feet)
     {
         Look look = pool.kind == Lava ? lava : water;
-
-        AudioClip[] clips = (look.splashClips != null && look.splashClips.Length > 0) ? look.splashClips : look.stepClips;
-        PlaySound(look, clips, feet);
-
-        float level = Multiplier(look.walkingLevel);
-        if (!particlesEnabled || level <= 0f) return;
-
-        int count = Mathf.RoundToInt(RollInt(splashPieces) * level);
-        for (int i = 0; i < count; i++) WalkingHop(pool, cell, feet);
+        PlaySound(look, ClipsFor(look, true), feet);
+        EmitPieces(pool, cell, feet, RollInt(splashPieces), Multiplier(look.walkingLevel));
     }
 
-    private void WalkingHop(Pool pool, Vector3Int cell, Vector2 feet)
+    // Splash clips for a splash, step clips for a step; if one list is empty the other one is used.
+    private static AudioClip[] ClipsFor(Look look, bool splash)
     {
-        Vector2 start = feet + new Vector2(Random.Range(-0.12f, 0.12f), Random.Range(-0.12f, 0.12f));
+        bool haveSplash = look.splashClips != null && look.splashClips.Length > 0;
+        bool haveStep = look.stepClips != null && look.stepClips.Length > 0;
 
-        Vector2 ignored;
-        Color colour;
-        SampleTile(pool, cell, out ignored, out colour);   // only the colour: the piece starts at the player's feet
-        SpawnHop(start, colour, RollFloat(walkingHopSeconds));
+        if (splash) return haveSplash ? look.splashClips : look.stepClips;
+        return haveStep ? look.stepClips : look.splashClips;
+    }
+
+    private void EmitPieces(Pool pool, Vector3Int cell, Vector2 feet, int baseCount, float level)
+    {
+        if (!particlesEnabled || level <= 0f) return;
+
+        int count = Mathf.RoundToInt(baseCount * level);
+        for (int i = 0; i < count; i++)
+        {
+            Vector2 start = feet + new Vector2(Random.Range(-0.12f, 0.12f), Random.Range(-0.12f, 0.12f));
+
+            Vector2 ignored;
+            Color colour;
+            SampleTile(pool, cell, out ignored, out colour);   // only the colour: the piece starts at the player's feet
+            SpawnHop(start, colour, RollFloat(walkingHopSeconds));
+        }
     }
 
     // ------------------------------------------------------------ ambient hops
@@ -1209,9 +1432,9 @@ public class HazardTileFx : MonoBehaviour
         }
     }
 
-    private void SpawnHop(Vector2 from, Color colour, float seconds)
+    private void SpawnHop(Vector2 start, Color colour, float seconds)
     {
-        if (IsWallAt(from)) return;   // never start inside a wall
+        if (IsWallAt(start)) return;   // never start inside a wall
 
         EnsureHops();
 
@@ -1230,25 +1453,25 @@ public class HazardTileFx : MonoBehaviour
         float height = RollFloat(hopHeightPixels) / pixelsPerUnit;
 
         // Try a few directions and keep the one that gets furthest before a wall (all of them are fine when there are no walls).
-        Vector2 to = from;
+        Vector2 end = start;
         float best = -1f;
         for (int attempt = 0; attempt < 4; attempt++)
         {
             float angle = Random.value * 6.2832f;
             Vector2 dir = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
-            Vector2 end = ReachableEnd(from, dir, distance);
-            float reach = (end - from).magnitude;
+            Vector2 reached = ReachableEnd(start, dir, distance);
+            float reach = (reached - start).magnitude;
             if (reach > best)
             {
                 best = reach;
-                to = end;
+                end = reached;
             }
             if (reach >= distance * 0.99f) break;
         }
 
-        hop.from = from;
-        hop.to = to;
-        hop.height = FitHeight(from, to, height);
+        hop.from = start;
+        hop.to = end;
+        hop.height = FitHeight(start, end, height);
         hop.life = Mathf.Max(0.1f, seconds);
         hop.age = 0f;
         hop.size = Mathf.Max(0.5f, RollFloat(pieceSizePixels)) / pixelsPerUnit;
@@ -1256,7 +1479,7 @@ public class HazardTileFx : MonoBehaviour
         hop.active = true;
         activeHops++;
 
-        hop.t.position = new Vector3(from.x, from.y, 0f);
+        hop.t.position = new Vector3(start.x, start.y, 0f);
         hop.t.localScale = new Vector3(hop.size, hop.size, 1f);
         hop.sr.sortingLayerID = pieceLayerId;
         hop.sr.sortingOrder = pieceOrder;
@@ -1267,17 +1490,17 @@ public class HazardTileFx : MonoBehaviour
     }
 
     // The furthest point along a direction (up to "distance") that is still clear of walls.
-    private Vector2 ReachableEnd(Vector2 from, Vector2 dir, float distance)
+    private Vector2 ReachableEnd(Vector2 start, Vector2 dir, float distance)
     {
-        if (!HasWalls) return from + dir * distance;
+        if (!HasWalls) return start + dir * distance;
 
         const float step = 0.1f;
-        Vector2 last = from;
+        Vector2 last = start;
         float travelled = 0f;
         while (travelled < distance)
         {
             travelled = Mathf.Min(distance, travelled + step);
-            Vector2 p = from + dir * travelled;
+            Vector2 p = start + dir * travelled;
             if (IsNearWall(p)) break;
             last = p;
         }
@@ -1285,13 +1508,13 @@ public class HazardTileFx : MonoBehaviour
     }
 
     // The jump is drawn higher up the screen than the ground it flies over, so a piece under a wall must jump lower (or not at all).
-    private float FitHeight(Vector2 from, Vector2 to, float height)
+    private float FitHeight(Vector2 start, Vector2 end, float height)
     {
         if (!HasWalls) return height;
 
-        Vector2 quarter = Vector2.Lerp(from, to, 0.25f);
-        Vector2 middle = Vector2.Lerp(from, to, 0.5f);
-        Vector2 threeQuarters = Vector2.Lerp(from, to, 0.75f);
+        Vector2 quarter = Vector2.Lerp(start, end, 0.25f);
+        Vector2 middle = Vector2.Lerp(start, end, 0.5f);
+        Vector2 threeQuarters = Vector2.Lerp(start, end, 0.75f);
 
         for (int i = 0; i < 4; i++)
         {
