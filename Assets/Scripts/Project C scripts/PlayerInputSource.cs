@@ -39,7 +39,7 @@ public class KeyBindings
     public KeyCode[] down = new KeyCode[0];
     [Tooltip("Run (tap to switch on / off, or hold: set Sprint Toggle on the movement script).")]
     public KeyCode[] sprint = new KeyCode[0];
-    [Tooltip("Jump. Only the Platformer controller reads this.")]
+    [Tooltip("Jump (the TopDown fake jump and the Platformer controller). In a TopDown game a Jump list that contains a Move key is replaced by the default.")]
     public KeyCode[] jump = new KeyCode[0];
     [Tooltip("Swap. Hold it next to a downed partner to revive them.")]
     public KeyCode[] interact = new KeyCode[0];
@@ -120,7 +120,7 @@ public class KeyBindings
             b.weaponPrev = new[] { KeyCode.Q };
             b.weaponNext = new[] { KeyCode.R };
             b.inventory = new[] { KeyCode.Tab };
-            b.jump = new[] { KeyCode.Space, KeyCode.W };      // only the Platformer controller reads Jump
+            b.jump = new[] { KeyCode.Z };                     // its own key: never W, or every step up would jump
         }
         else if (player == 2)
         {
@@ -129,12 +129,12 @@ public class KeyBindings
             b.up = new[] { KeyCode.UpArrow };
             b.down = new[] { KeyCode.DownArrow };
             b.sprint = new[] { KeyCode.RightShift };
-            b.attack = new[] { KeyCode.RightControl };
+            b.attack = new[] { KeyCode.Quote };               // the ' key
             b.interact = new[] { KeyCode.Slash };
             b.weaponPrev = new[] { KeyCode.Comma };
             b.weaponNext = new[] { KeyCode.Period };
             b.inventory = new[] { KeyCode.Return };
-            b.jump = new[] { KeyCode.UpArrow };
+            b.jump = new[] { KeyCode.Semicolon };             // the ; key; never Up Arrow, or every step up would jump
         }
         return b;
     }
@@ -167,11 +167,11 @@ public class KeyBindings
 ///                           Player 1             Player 2
 ///   Move                    W A S D              Arrow keys
 ///   Run (tap to toggle)     Left Shift           Right Shift
-///   Swing sword             F                    Right Ctrl
+///   Swing sword             F                    ' (apostrophe)
 ///   Swap / revive (hold)    E                    / (Slash)
 ///   Previous / next sword   Q / R                , / .
 ///   Inventory               Tab                  Enter
-///   Jump (Platformer only)  Space or W           Up Arrow
+///   Jump                    Z                    ; (semicolon)
 ///   Pick sword 1-9          number keys (Player 1 only)
 ///   Pause is global, not per player: PauseManager (Esc / P, and Start on any controller).
 ///   Players 3 and 4 have no keys until you add some; they are made for controllers.
@@ -776,7 +776,42 @@ public class PlayerInputSource : MonoBehaviour
         _tablesFor = playerNumber;
         _tableCoop = ToTable(keysByPlayer[Mathf.Clamp(playerNumber, 1, MaxPlayers) - 1]);
         _tableSolo = playerNumber == 1 ? Merge(_tableCoop, ToTable(soloExtraKeys)) : _tableCoop;
+        DropMoveKeysFromJump(_tableCoop, true);
+        if (_tableSolo != _tableCoop) DropMoveKeysFromJump(_tableSolo, false);
         _tablesDirty = false;
+    }
+
+    // TopDown only: a Jump list that contains a Move key is an old Platformer list (Space + W, Up Arrow). Walking must never jump,
+    // and the other keys in such a list are just as old, so the whole list is replaced by this player's default Jump keys.
+    // Old lists can sit on a prefab, in the hub, or in Solo Extra Keys; this catches all of them without touching the saved data.
+    // Only the table is changed, never the Inspector fields. A list with no Move key in it is left exactly as it is.
+    private void DropMoveKeysFromJump(KeyCode[][] table, bool warn)
+    {
+        if (scheme != ControlScheme.TopDown) return;
+
+        KeyCode[] jump = table[(int)PlayerAction.Jump];
+        for (int i = 0; i < jump.Length; i++)
+        {
+            if (!IsMoveKey(table, jump[i])) continue;
+
+            if (warn)
+            {
+                Debug.LogWarning("PlayerInputSource: Player " + playerNumber + "'s Jump list has " + jump[i] + ", which is also a Move key " +
+                                 "(an old Platformer default), so the whole list is replaced by this player's default Jump keys. " +
+                                 "Set the Jump keys you want in the PlayerInputHub slot (or Keys By Player) to clear this message.", this);
+            }
+
+            table[(int)PlayerAction.Jump] = (KeyCode[])KeyBindings.CreateDefault(playerNumber).jump.Clone();
+            return;
+        }
+    }
+
+    private static bool IsMoveKey(KeyCode[][] table, KeyCode key)
+    {
+        return Array.IndexOf(table[(int)PlayerAction.Left], key) >= 0
+            || Array.IndexOf(table[(int)PlayerAction.Right], key) >= 0
+            || Array.IndexOf(table[(int)PlayerAction.Up], key) >= 0
+            || Array.IndexOf(table[(int)PlayerAction.Down], key) >= 0;
     }
 
     private static KeyCode[][] ToTable(KeyBindings b)

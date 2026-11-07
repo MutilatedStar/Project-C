@@ -42,6 +42,9 @@ using Ilumisoft.HealthSystem;
 ///           (frames 0 and 1 by default, so only spike-trap-16px_strip8_2 to _7 hurt). Players are hurt through
 ///           CoopHealth.ApplyDamage, so Invincible and the CoopRules (Shared Damage, Single Player Mode) still apply.
 ///
+/// A player who is jumping (CoopHealth.Airborne) is skipped: they fly over lava, water and spikes, and a spike's cooldown isn't used up on a hit
+/// that would do nothing. The moment they land, the tile under them is read again.
+///
 /// HazardTileFx (a separate script on its own object) gives those same lava and water tiles their glow, hopping pieces and walking
 /// sounds. It reads the tile names, the Tilemaps and the foot point from here (see "hooks for HazardTileFx" below), so what glows is
 /// exactly what burns. This script does not need it, and it does not need this script's "Hazards Enabled" box ticked.
@@ -353,6 +356,7 @@ public class FloorManager : MonoBehaviour
         {
             CoopHealth p = CoopHealth.Get(n);
             if (p == null || !p.IsAlive || !CoopRules.Counts(n)) continue;
+            if (p.Airborne) continue;   // jumping: nothing to read, nothing to hurt
 
             bool onLava;
             bool onWater;

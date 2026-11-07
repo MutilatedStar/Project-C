@@ -230,6 +230,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1314684541}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1314684542}
   m_SourcePrefab: {fileID: 100100000, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
 --- !u!4 &29989951 stripped
 Transform:
@@ -14083,6 +14086,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1039362056}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1039362057}
   m_SourcePrefab: {fileID: 100100000, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
 --- !u!1 &1039362042 stripped
 GameObject:
@@ -14138,10 +14144,10 @@ MonoBehaviour:
   keysByPlayer:
   - left: 61000000i
     right: 64000000i
-    up: 77000000i
+    up: 09000000i
     down: 73000000i
     sprint: 30010000i
-    jump: 2000000077000000i
+    jump: 7a000000i
     interact: 65000000i
     attack: 66000000i
     inventory: 09000000i
@@ -14152,7 +14158,7 @@ MonoBehaviour:
     up: 11010000i
     down: 12010000i
     sprint: 2f010000i
-    jump: 11010000i
+    jump: 0a010000i
     interact: 2f000000i
     attack: 31010000i
     inventory: 0d000000i
@@ -14576,6 +14582,54 @@ MonoBehaviour:
   haloSize: 1
   haloPulse: 0
   haloPulseSpeed: 3
+--- !u!114 &1039362057
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1039362042}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 50f8ceca767ab0d48885327db6270c48, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Cainos.PixelArtTopDown_Basic.TopDownJump
+  jumpHeight: 0.7
+  jumpDuration: 0.55
+  cooldown: 0.1
+  airSpeedMultiplier: 1.15
+  hurtboxes: []
+  bodyRenderer: {fileID: 0}
+  shadow: {fileID: 0}
+  shadowOffset: {x: 0, y: 0}
+  shadowSize: {x: 0.8, y: 0.4}
+  shadowOpacity: 0.35
+  shadowShrink: 0.6
+  liftedParts: []
+  jumpOver:
+    physicsLayers:
+      serializedVersion: 2
+      m_Bits: 0
+    sortingLayers: []
+  neverJumpOver:
+    physicsLayers:
+      serializedVersion: 2
+      m_Bits: 0
+    sortingLayers: []
+  jumpOn:
+    physicsLayers:
+      serializedVersion: 2
+      m_Bits: 0
+    sortingLayers: []
+  levels:
+  - physicsLayer: Layer 2
+    sortingLayer: Layer 2
+  - physicsLayer: Layer 3
+    sortingLayer: Layer 3
+  heightPerLevel: 0
+  scanRadius: 1.25
+  blockedLandingSeconds: 1
+  logKeysAtStart: 1
 --- !u!1 &1042535565
 GameObject:
   m_ObjectHideFlags: 0
@@ -16248,7 +16302,7 @@ MonoBehaviour:
     up: 11010000i
     down: 12010000i
     sprint: 2f010000i
-    jump: 11010000i
+    jump: 0a010000i
     interact: 2f000000i
     attack: 31010000i
     inventory: 0d000000i
@@ -16358,6 +16412,54 @@ MonoBehaviour:
   haloSize: 1
   haloPulse: 0
   haloPulseSpeed: 3
+--- !u!114 &1314684542
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1314684519}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 50f8ceca767ab0d48885327db6270c48, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Cainos.PixelArtTopDown_Basic.TopDownJump
+  jumpHeight: 0.7
+  jumpDuration: 0.55
+  cooldown: 0.1
+  airSpeedMultiplier: 1.15
+  hurtboxes: []
+  bodyRenderer: {fileID: 0}
+  shadow: {fileID: 0}
+  shadowOffset: {x: 0, y: 0}
+  shadowSize: {x: 0.8, y: 0.4}
+  shadowOpacity: 0.35
+  shadowShrink: 0.6
+  liftedParts: []
+  jumpOver:
+    physicsLayers:
+      serializedVersion: 2
+      m_Bits: 0
+    sortingLayers: []
+  neverJumpOver:
+    physicsLayers:
+      serializedVersion: 2
+      m_Bits: 0
+    sortingLayers: []
+  jumpOn:
+    physicsLayers:
+      serializedVersion: 2
+      m_Bits: 0
+    sortingLayers: []
+  levels:
+  - physicsLayer: Layer 2
+    sortingLayer: Layer 2
+  - physicsLayer: Layer 3
+    sortingLayer: Layer 3
+  heightPerLevel: 0
+  scanRadius: 1.25
+  blockedLandingSeconds: 1
+  logKeysAtStart: 1
 --- !u!1 &1356870079
 GameObject:
   m_ObjectHideFlags: 0
@@ -17495,7 +17597,7 @@ MonoBehaviour:
     glow: 1
     glowColour: {r: 1, g: 0.42, b: 0.08, a: 1}
     glowHighlight: {r: 1, g: 0.78, b: 0.3, a: 1}
-    glowStrength: 1
+    glowOpacity: 1
     glowPulse: 0.35
     glowPulseSeconds: 3.5
     ambientLevel: 3
@@ -17511,7 +17613,7 @@ MonoBehaviour:
     glow: 1
     glowColour: {r: 0.25, g: 0.65, b: 1, a: 1}
     glowHighlight: {r: 0.6, g: 0.92, b: 1, a: 1}
-    glowStrength: 0.18
+    glowOpacity: 0.18
     glowPulse: 0.35
     glowPulseSeconds: 3.5
     ambientLevel: 3
@@ -17522,11 +17624,15 @@ MonoBehaviour:
     splashClips: []
     volume: {x: 0.6, y: 0.9}
     pitch: {x: 0.92, y: 1.08}
-  glowShader: {fileID: 4800000, guid: e76cfec213a1a9a4aa5aba968356f6b5, type: 3}
-  glowMaterial: {fileID: 2100000, guid: e3265ab4bf004d28a9537516768c1c75, type: 3}
+  glowMode: 2
+  glowOpacityAll: 1
+  glowBands: 8
+  glowBleed: 1
+  glowOnlyOverTiles: 1
   glowEdgeSoftness: 0.6
   glowTexelsPerTile: 8
-  glowBands: 8
+  glowOffset: {x: 0, y: 0}
+  glowShader: {fileID: 4800000, guid: e76cfec213a1a9a4aa5aba968356f6b5, type: 3}
   pixelsPerUnit: 32
   maxPieces: 64
   pieceSizePixels: {x: 2, y: 3.5}

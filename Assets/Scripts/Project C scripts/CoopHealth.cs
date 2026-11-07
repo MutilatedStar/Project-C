@@ -14,6 +14,8 @@ namespace Ilumisoft.HealthSystem
     ///   CoopRules.SinglePlayerMode  a player who doesn't count takes no damage at all
     ///   Invincible                  while true this player takes no damage at all (PlayerEffects sets it for the
     ///                               invincibility power-up). A hit that is blocked is not passed on to the other player either.
+    ///   Airborne                    the same, but owned by the jump: TopDownJump sets it in the air and clears it on landing. It is a
+    ///                               separate flag so landing can never switch the invincibility power-up off.
     ///
     /// Helpers for other scripts:
     ///   CoopHealth.Nearest(position)   the closest living player that counts (foes: "who do I chase / hit?")
@@ -41,6 +43,9 @@ namespace Ilumisoft.HealthSystem
         /// <summary>While true, damage does nothing (healing still works). Set by PlayerEffects, or by your own scripts.</summary>
         public bool Invincible { get; set; }
 
+        /// <summary>While true, damage does nothing (healing still works). Set by TopDownJump while the player is in the air: no hurt box up there.</summary>
+        public bool Airborne { get; set; }
+
         public int PlayerNumber
         {
             get
@@ -61,9 +66,9 @@ namespace Ilumisoft.HealthSystem
                 return;
             }
 
-            // Single player mode: the player who doesn't count can't be hurt. Neither can an invincible one.
+            // Single player mode: the player who doesn't count can't be hurt. Neither can an invincible or a jumping one.
             if (!CoopRules.Counts(PlayerNumber)) return;
-            if (Invincible) return;
+            if (Invincible || Airborne) return;
 
             base.ApplyDamage(damage);
 

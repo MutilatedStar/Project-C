@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Audio;
+using UnityEngine.Serialization;
 using UnityEngine.Tilemaps;
 using Ilumisoft.HealthSystem;
 
@@ -8,15 +9,19 @@ using Ilumisoft.HealthSystem;
 
 /// <summary>
 /// The look and sound of lava and water tiles. Put it on ONE empty object in the scene (FloorManager finds the same tiles
-/// it hurts with, so what glows is exactly what burns). It builds everything else by itself: no prefabs, nothing to wire up
-/// except the sound clips and (once) the glow shader.
+/// it hurts with, so what glows is exactly what burns). It builds everything else by itself: no prefabs, NO MATERIAL TO MAKE,
+/// nothing to wire up except the sound clips. (The glow materials are made from HazardGlow.shader while the game runs.
+/// Don't put that shader on your Tilemaps: this script uses it on its own sprites.)
 ///
-///   GLOW        a fake light for a top-down sprite game. Two soft layers of light, baked from the tile shapes, are laid over every
-///               lava / water pool and ADDED to what is underneath (that is what makes it look like light and not like a coat of
-///               paint). One layer is the main colour, the other a brighter highlight colour, and they breathe out of step, so
-///               bright patches seem to drift across the pool. It fades to nothing at the edge of the pool and can NEVER spill onto
-///               a neighbouring floor or wall tile. It is drawn in front of the characters, so a player standing in lava is lit by it.
-///               Needs HazardGlow.shader (see "Glow Shader"). Without it a plain, weaker overlay is used.
+///   GLOW        a fake light for a top-down sprite game, in two soft layers baked from the tile shapes:
+///                 Additive    the light is ADDED to what is underneath: hot, bright, a bit like fire.
+///                 Soft Light  the light TINTS and brightens the art underneath (bright pixels more than dark ones) instead of washing
+///                             over it, so the tile art and the characters keep all their detail. Looks like a real light.
+///                 Both        (default) soft light for the main colour, additive for the shimmering highlight.
+///               The two layers breathe out of step, so bright patches seem to drift over the pool. The light BLEEDS out of the pool
+///               onto the tiles around it ("Glow Bleed", in tiles) but never onto or past a wall: it is cut off clean at the wall's edge
+///               and does not wrap through it. It is drawn in front of the characters, so a player standing in lava is lit by it.
+///               "Opacity" on Lava and Water and "Glow Opacity (all)" set how strong it is.
 ///   PARTICLES   small square pieces that take the colour of a random pixel of the tile's own sprite and hop out of the tile:
 ///               slowly, at random times, with no help from anybody (AMBIENT); a few on EVERY STEP a player takes on it; and a
 ///               bigger splash when a player steps in. Every kind has its own level: Off / Low / Medium / High.
@@ -38,13 +43,17 @@ using Ilumisoft.HealthSystem;
 ///
 /// WALLS AND LAYERS: the effects are drawn on the players' sorting layer, a little above the highest player, so pieces and glow
 /// can go in front of the characters. Walls are found by themselves (Tilemaps with a solid Tilemap Collider 2D); a piece is never
-/// started in a wall or sent through one, and the glow has no tiles under walls. If a wall Tilemap is drawn in front of the players,
+/// started in a wall or sent through one, and the glow stops at walls. If a wall Tilemap is drawn in front of the players,
 /// the effects are kept just below it. If something that is not a wall gets taken for one (a player stands on lava "inside" it),
 /// it is dropped from the walls after half a second and a warning tells you which Tilemap it was. Fill in "Wall Tilemaps" and / or
 /// "Wall Mask" to set the walls yourself.
 ///
+/// ALIGNMENT: the glow is laid on the tile GRID, then moved by however far the tile art is drawn from its grid cell (a Tilemap draws
+/// a sprite's pivot on its "Tile Anchor", so a sprite with a corner pivot sits off its cell). If the glow still sits a little off, use
+/// "Glow Offset" (world units) to nudge it.
+///
 /// If something does not show up, look at the one line this script writes to the Console when it starts: it says how many lava and
-/// water tiles it found, which Tilemaps count as walls, where it draws and whether the glow shader was found.
+/// water tiles it found, which Tilemaps count as walls, where it draws, and whether the glow shader was found.
 ///
 /// Sprite textures do NOT need Read/Write enabled: if a texture can't be read directly, the colours are read back from the GPU.
 /// Test: in Play mode, right-click this component's header > "Rebuild Now" after you change tiles by hand.
@@ -56,6 +65,14 @@ public class HazardTileFx : MonoBehaviour
 
     /// <summary>How busy an effect is. Off = nothing, Low = half as often, Medium = as set below, High = twice as often.</summary>
     public enum FxLevel { Off, Low, Medium, High }
+
+    /// <summary>How the glow is mixed into the picture.</summary>
+    public enum GlowMode
+    {
+        Additive,               // the light is added to what is underneath: hot and bright
+        SoftLight,              // the light tints and brightens the art underneath, keeping its detail
+        SoftLightAndAdditive    // soft light for the main colour, additive for the shimmering highlight
+    }
 
     /// <summary>Everything that can be set for ONE kind of tile (shown once for Lava and once for Water).</summary>
     [System.Serializable]
@@ -71,8 +88,9 @@ public class HazardTileFx : MonoBehaviour
         public Color glowColour = Color.white;
         [Tooltip("The second, brighter colour of the light. It shimmers in and out over the main colour.")]
         public Color glowHighlight = Color.white;
-        [Tooltip("How strong the light is at its brightest. With the additive shader 0.3 to 0.7 looks good. Higher = hotter.")]
-        [Range(0f, 1f)] public float glowStrength = 0.5f;
+        [Tooltip("Opacity of the glow for this kind of tile: 0 = invisible, 1 = as strong as it gets. 0.3 to 0.8 looks good.")]
+        [FormerlySerializedAs("glowStrength")]
+        [Range(0f, 1f)] public float glowOpacity = 0.6f;
         [Tooltip("How much the whole glow breathes. 0 = steady, 1 = fades almost out and back.")]
         [Range(0f, 1f)] public float glowPulse = 0.35f;
         [Tooltip("Seconds for one slow breath of the glow.")]
@@ -110,7 +128,7 @@ public class HazardTileFx : MonoBehaviour
     [SerializeField] private bool particlesEnabled = true;
     [Tooltip("Step and splash sounds.")]
     [SerializeField] private bool soundEnabled = true;
-    [Tooltip("ON: the glow is drawn in front of the characters (still only over the tiles, never outside them), so a player standing in lava is lit by it. " +
+    [Tooltip("ON: the glow is drawn in front of the characters, so a player standing in lava is lit by it. " +
              "OFF: the glow sits on the tiles, behind the characters.")]
     [SerializeField] private bool glowOverCharacters = true;
 
@@ -119,7 +137,7 @@ public class HazardTileFx : MonoBehaviour
     {
         glowColour = new Color(1f, 0.38f, 0.05f),
         glowHighlight = new Color(1f, 0.78f, 0.3f),
-        glowStrength = 0.55f,
+        glowOpacity = 0.7f,
         fallbackColour = new Color(1f, 0.5f, 0.1f)
     };
 
@@ -128,22 +146,34 @@ public class HazardTileFx : MonoBehaviour
     {
         glowColour = new Color(0.15f, 0.45f, 0.9f),
         glowHighlight = new Color(0.6f, 0.92f, 1f),
-        glowStrength = 0.4f,
+        glowOpacity = 0.55f,
         fallbackColour = new Color(0.5f, 0.8f, 1f)
     };
 
-    [Header("Glow shape and look")]
-    [Tooltip("The additive glow shader (HazardGlow.shader). It is filled in by itself in the Editor when it is in your project. " +
-             "Leave it in the field so it is included in builds. Empty and not found = a plain, weaker overlay instead.")]
-    [SerializeField] private Shader glowShader;
-    [Tooltip("Optional. Use your own material for the glow instead of the shader above (for example another additive sprite material).")]
-    [SerializeField] private Material glowMaterial;
-    [Tooltip("How far the glow fades in from the edge of a pool, in tiles. 0 = a hard edge. Small pools glow less when this is big.")]
-    [SerializeField, Range(0f, 1.5f)] private float glowEdgeSoftness = 0.6f;
-    [Tooltip("Resolution of the baked glow, in pixels per tile. Higher is smoother but uses more memory.")]
-    [SerializeField, Range(2, 16)] private int glowTexelsPerTile = 8;
+    [Header("Glow: look")]
+    [Tooltip("Additive = hot and bright. Soft Light = tints and brightens the art underneath, keeping its detail. Both = soft light plus an additive shimmer.")]
+    [SerializeField] private GlowMode glowMode = GlowMode.SoftLightAndAdditive;
+    [Tooltip("Opacity of ALL glow, on top of the Opacity of Lava and Water. 1 = as set there, 0 = no glow at all.")]
+    [SerializeField, Range(0f, 1f)] private float glowOpacityAll = 1f;
     [Tooltip("0 = smooth light. 3 to 8 = the light is cut into that many hard steps of brightness, which suits pixel art.")]
     [SerializeField, Range(0, 8)] private int glowBands = 0;
+
+    [Header("Glow: bleed and shape")]
+    [Tooltip("How far the light reaches OUT of the lava / water onto the tiles around it, in tiles. 0 = it stays exactly on the lava / water tiles. " +
+             "It is cut off at walls and never goes through them.")]
+    [SerializeField, Range(0f, 3f)] private float glowBleed = 1f;
+    [Tooltip("ON: the light only bleeds onto tiles that exist (floor), not onto empty space around the map. " +
+             "Turn it OFF if your floor is not made of tiles (a background sprite, for example).")]
+    [SerializeField] private bool glowOnlyOverTiles = true;
+    [Tooltip("Smooths the glow, in tiles. Fine detail in the shape of the edge is rounded off by this. 0 = no smoothing.")]
+    [SerializeField, Range(0f, 1.5f)] private float glowEdgeSoftness = 0.35f;
+    [Tooltip("Resolution of the baked glow, in pixels per tile. Higher is smoother but uses more memory.")]
+    [SerializeField, Range(2, 16)] private int glowTexelsPerTile = 8;
+    [Tooltip("Nudges the whole glow, in world units, if it sits a little off the tile art. It is already moved to match how the tiles are drawn.")]
+    [SerializeField] private Vector2 glowOffset = Vector2.zero;
+    [Tooltip("The glow shader (HazardGlow.shader). It fills itself in the Editor when the file is in your project. " +
+             "Leave it in the field so it ships in builds. Empty and not found = a plain, weaker overlay instead.")]
+    [SerializeField] private Shader glowShader;
 
     [Header("Particles: the hop")]
     [Tooltip("Pixels per Unity unit of your sprites (Pixel Art Top Down uses 32). Sizes, distances and heights below are in pixels.")]
@@ -194,7 +224,7 @@ public class HazardTileFx : MonoBehaviour
     [SerializeField, Min(1)] private int sortingOrdersAbovePlayers = 2;
 
     [Header("Housekeeping")]
-    [Tooltip("Writes one line to the Console describing what was found (tile counts, walls, layers, glow shader). Handy when something doesn't show up.")]
+    [Tooltip("Writes one line to the Console describing what was found (tile counts, walls, layers, glow). Handy when something doesn't show up.")]
     [SerializeField] private bool logSetup = true;
     [Tooltip("Only used when there is no FloorManager in the scene: a tile is lava when its name contains this.")]
     [SerializeField] private string fallbackLavaName = "lava";
@@ -209,6 +239,9 @@ public class HazardTileFx : MonoBehaviour
     public bool GlowEnabled { get { return glowEnabled; } set { glowEnabled = value; } }
     public bool ParticlesEnabled { get { return particlesEnabled; } set { particlesEnabled = value; } }
     public bool SoundEnabled { get { return soundEnabled; } set { soundEnabled = value; } }
+
+    /// <summary>Opacity of all the glow, 0 to 1 (the "Glow Opacity (all)" slider).</summary>
+    public float GlowOpacity { get { return glowOpacityAll; } set { glowOpacityAll = Mathf.Clamp01(value); } }
 
     /// <summary>Re-reads every Tilemap on the next frame. Only needed if tiles are changed in a way Unity doesn't report.</summary>
     [ContextMenu("Rebuild Now")]
@@ -244,21 +277,24 @@ public class HazardTileFx : MonoBehaviour
 
     // ------------------------------------------------------------ state
 
-    private const string GlowShaderName = "Sprites/Hazard Glow Additive";
+    private const string GlowShaderName = "Sprites/Hazard Glow";
     private const int Lava = 0;
     private const int Water = 1;
     private const int None = -1;
     private const int KindCount = 2;
     private const int MaxPlayers = 4;
-    private const int GlowLayers = 2;              // the main layer and the highlight layer
+    private const int GlowLayers = 2;              // the main layer (0) and the highlight layer (1)
+    private const int BlockTiles = 32;             // the glow is baked in blocks of 32 x 32 tiles, so empty space costs nothing
+    private const float Unreached = 1e9f;          // "the light has not got here" in the distance maps
     private const float TeleportDistance = 1.5f;   // moving further than this in one frame is a teleport, not a step
     private const float MinMove = 0.002f;          // smaller moves are physics jitter, not walking
-    private const float GlowEdgeGain = 2.5f;       // how quickly the baked glow reaches full strength inside a pool
     private const float WallDoubtSeconds = 0.5f;   // a "wall" a player stands in for this long is not a wall
 
-    // One layer of baked light over a pool.
+    // One baked block of light over a pool (a main layer and a highlight layer each get their own).
     private class GlowLayer
     {
+        public int layer;
+        public bool soft;
         public GameObject go;
         public SpriteRenderer sr;
         public Texture2D tex;
@@ -271,11 +307,14 @@ public class HazardTileFx : MonoBehaviour
         public Tilemap map;
         public int kind;
         public Vector2 cellSize;
+        public Vector2 artOffset;   // how far the tile art is drawn from the middle of its grid cell
         public float phase;
+        public readonly float[] seedX = new float[GlowLayers];
+        public readonly float[] seedY = new float[GlowLayers];
         public readonly List<Vector3Int> cells = new List<Vector3Int>();
         public readonly HashSet<Vector3Int> set = new HashSet<Vector3Int>();
         public readonly List<Vector3Int> visible = new List<Vector3Int>();
-        public readonly GlowLayer[] layers = new GlowLayer[GlowLayers];
+        public readonly List<GlowLayer> glow = new List<GlowLayer>();
     }
 
     // One piece hopping out of a tile.
@@ -331,15 +370,18 @@ public class HazardTileFx : MonoBehaviour
 
     private ContactFilter2D wallFilter;
     private FloorManager floorManager;
+    private Tilemap[] allMaps = new Tilemap[0];
     private GameObject root;
     private Hop[] hops;
     private int activeHops;
     private AudioSource[] sources;
     private int nextSource;
 
-    private Material builtGlowMaterial;
-    private bool glowMaterialTried;
-    private bool glowIsAdditive;
+    private Material additiveMaterial;
+    private Material softMaterial;
+    private Material plainMaterial;
+    private bool materialsTried;
+    private bool shaderOk;
     private bool autoWalls;
     private string lastLog;
 
@@ -383,7 +425,9 @@ public class HazardTileFx : MonoBehaviour
     private void OnDestroy()
     {
         DestroyPools();
-        if (builtGlowMaterial != null) Destroy(builtGlowMaterial);
+        if (additiveMaterial != null) Destroy(additiveMaterial);
+        if (softMaterial != null) Destroy(softMaterial);
+        if (plainMaterial != null) Destroy(plainMaterial);
         if (root != null) Destroy(root);
     }
 
@@ -526,6 +570,7 @@ public class HazardTileFx : MonoBehaviour
         DestroyPools();
         tileKinds.Clear();
         spriteKinds.Clear();
+        allMaps = all;
 
         if (floorManager == null) floorManager = FindAnyObjectByType<FloorManager>();
         lavaName = floorManager != null ? floorManager.LavaName : fallbackLavaName;
@@ -544,7 +589,7 @@ public class HazardTileFx : MonoBehaviour
         }
 
         FindWalls(all);
-        GlowMaterial();   // looks the shader up now so the setup line can say what it found
+        BuildMaterials();   // looks the shader up now so the setup line can say what it found
 
         for (int i = 0; i < pools.Count; i++) BakeGlow(pools[i]);
 
@@ -580,8 +625,15 @@ public class HazardTileFx : MonoBehaviour
 
                 if (made[kind] == null)
                 {
-                    made[kind] = new Pool { map = map, kind = kind, phase = Random.value * 6.2832f, cellSize = CellWorldSize(map) };
-                    pools.Add(made[kind]);
+                    Vector2 size = CellWorldSize(map);
+                    Pool pool = new Pool { map = map, kind = kind, phase = Random.value * 6.2832f, cellSize = size, artOffset = ArtOffset(map, cell, size) };
+                    for (int l = 0; l < GlowLayers; l++)
+                    {
+                        pool.seedX[l] = Random.Range(0f, 200f);
+                        pool.seedY[l] = Random.Range(0f, 200f);
+                    }
+                    made[kind] = pool;
+                    pools.Add(pool);
                 }
                 made[kind].cells.Add(cell);
                 made[kind].set.Add(cell);
@@ -628,11 +680,46 @@ public class HazardTileFx : MonoBehaviour
         return new Vector2(w > 0.0001f ? w : 1f, h > 0.0001f ? h : 1f);
     }
 
+    // How far the tile ART is drawn from the middle of its grid cell. A Tilemap draws a sprite with its pivot on the map's Tile Anchor
+    // (the middle of the cell by default), so a sprite whose pivot is a corner, or a map whose anchor is not the middle, shows the tile
+    // shifted off the grid. (0, 0) for the usual centred sprite. The glow is moved by this so it lands on the art and not on the grid.
+    private static Vector2 ArtOffset(Tilemap map, Vector3Int cell, Vector2 cellSize)
+    {
+        Sprite sprite = map.GetSprite(cell);
+        if (sprite == null) return Vector2.zero;
+
+        Vector3 scale = map.transform.lossyScale;
+        Vector3 anchor = map.tileAnchor;
+        Rect rect = sprite.rect;
+        float ppu = Mathf.Max(0.0001f, sprite.pixelsPerUnit);
+
+        float x = (anchor.x - 0.5f) * cellSize.x + ((rect.width * 0.5f - sprite.pivot.x) / ppu) * scale.x;
+        float y = (anchor.y - 0.5f) * cellSize.y + ((rect.height * 0.5f - sprite.pivot.y) / ppu) * scale.y;
+
+        Vector2 offset = new Vector2(x, y);
+        return offset.magnitude > 0.02f ? offset : Vector2.zero;
+    }
+
     private bool IsPoolMap(Tilemap map)
     {
         for (int i = 0; i < pools.Count; i++)
         {
             if (pools[i].map == map) return true;
+        }
+        return false;
+    }
+
+    // True if any Tilemap has a tile on this point (there is floor, or something, to light).
+    private bool HasAnyTile(Vector2 p)
+    {
+        for (int i = 0; i < allMaps.Length; i++)
+        {
+            Tilemap m = allMaps[i];
+            if (m == null || !m.gameObject.activeInHierarchy) continue;
+
+            Vector3Int c = m.WorldToCell(p);
+            c.z = 0;
+            if (m.HasTile(c)) return true;
         }
         return false;
     }
@@ -834,12 +921,12 @@ public class HazardTileFx : MonoBehaviour
     {
         for (int i = 0; i < pools.Count; i++)
         {
-            for (int l = 0; l < GlowLayers; l++)
+            List<GlowLayer> glow = pools[i].glow;
+            for (int g = 0; g < glow.Count; g++)
             {
-                GlowLayer g = pools[i].layers[l];
-                if (g == null || g.sr == null) continue;
-                g.sr.sortingLayerID = glowLayerId;
-                g.sr.sortingOrder = glowOrder;   // both layers share one order (they are added together, so which is on top doesn't matter)
+                if (glow[g].sr == null) continue;
+                glow[g].sr.sortingLayerID = glowLayerId;
+                glow[g].sr.sortingOrder = glowOrder;   // all layers share one order: they are blended together, so which is on top doesn't matter
             }
         }
 
@@ -851,165 +938,305 @@ public class HazardTileFx : MonoBehaviour
         }
     }
 
-    // ------------------------------------------------------------ the glow
+    // ------------------------------------------------------------ the glow: materials
 
-    // The material the glow is drawn with. Preferably the additive shader: adding light to the tiles (and to the characters standing on
-    // them) is what makes it look like light. Without it a plain sprite is used, which can only paint over, so it is made weaker.
-    private Material GlowMaterial()
+    // Makes the glow materials from the shader. Nothing to create or assign in the project: they only exist while the game runs.
+    // Two kinds: additive (adds light) and soft light (tints and brightens what is underneath). Without the shader a plain sprite is used,
+    // which can only paint over, so it is made weaker.
+    private void BuildMaterials()
     {
-        if (glowMaterial != null)
+        if (materialsTried) return;
+        materialsTried = true;
+
+        Shader shader = glowShader != null ? glowShader : Shader.Find(GlowShaderName);
+        if (shader != null && shader.isSupported)
         {
-            glowIsAdditive = true;   // your own material: taken to be the additive kind
-            return glowMaterial;
+            additiveMaterial = MakeGlowMaterial(shader, false);
+            softMaterial = MakeGlowMaterial(shader, true);
+            shaderOk = true;
+
+            if (!additiveMaterial.HasProperty("_SrcBlend"))
+            {
+                Debug.LogWarning("HazardTileFx: the glow shader is the OLD version of HazardGlow.shader (it has no soft light). " +
+                                 "Replace the file with the new one.", this);
+            }
+            return;
         }
 
-        if (!glowMaterialTried)
-        {
-            glowMaterialTried = true;
-
-            Shader shader = glowShader != null ? glowShader : Shader.Find(GlowShaderName);
-            if (shader != null && shader.isSupported)
-            {
-                builtGlowMaterial = new Material(shader);
-                glowIsAdditive = true;
-            }
-            else
-            {
-                // No additive shader. In URP's 2D renderer the default sprite material is LIT (a dark scene would swallow the glow),
-                // so ask for the unlit one when it exists.
-                Shader unlit = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
-                if (unlit != null && unlit.isSupported) builtGlowMaterial = new Material(unlit);
-            }
-        }
-        return builtGlowMaterial;
+        // No glow shader. In URP's 2D renderer the default sprite material is LIT (a dark scene would swallow the glow), so ask for the unlit one.
+        Shader unlit = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
+        if (unlit != null && unlit.isSupported) plainMaterial = new Material(unlit);
     }
 
-    // Bakes TWO soft textures for a whole pool: white, with an alpha that is 0 outside the lava / water tiles (and under walls), fades in
-    // from the edge and varies from place to place (a different pattern in each). The sprite renderers only tint them. Because the alpha is
-    // 0 off the tiles, the glow cannot spill onto the floor or the walls around the pool.
+    private static Material MakeGlowMaterial(Shader shader, bool soft)
+    {
+        Material m = new Material(shader);
+        m.name = soft ? "HazardGlow (soft light)" : "HazardGlow (additive)";
+        m.SetFloat("_Mode", soft ? 1f : 0f);
+
+        // Additive: source + destination. Soft light: 2 x source x destination, where a source of 50% grey changes nothing.
+        m.SetFloat("_SrcBlend", soft ? (float)UnityEngine.Rendering.BlendMode.DstColor : (float)UnityEngine.Rendering.BlendMode.One);
+        m.SetFloat("_DstBlend", soft ? (float)UnityEngine.Rendering.BlendMode.SrcColor : (float)UnityEngine.Rendering.BlendMode.One);
+        return m;
+    }
+
+    private Material MaterialFor(bool soft)
+    {
+        if (shaderOk) return soft ? softMaterial : additiveMaterial;
+        return plainMaterial;
+    }
+
+    // Which of the two layers is drawn as soft light in the chosen mode.
+    private bool LayerIsSoft(int layer)
+    {
+        switch (glowMode)
+        {
+            case GlowMode.SoftLight: return true;
+            case GlowMode.SoftLightAndAdditive: return layer == 0;
+            default: return false;
+        }
+    }
+
+    // ------------------------------------------------------------ the glow: baking
+
+    // Bakes the glow of one pool, a block of 32 x 32 tiles at a time. Only blocks that have lava / water in them, or that the light can
+    // reach, get a texture, so a map with two lakes far apart doesn't pay for the space between them.
     private void BakeGlow(Pool pool)
     {
-        Tilemap map = pool.map;
-        if (map == null || pool.cells.Count == 0) return;
+        if (pool.map == null || pool.cells.Count == 0) return;
 
-        int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
-        for (int i = 0; i < pool.cells.Count; i++)
-        {
-            Vector3Int c = pool.cells[i];
-            if (c.x < minX) minX = c.x;
-            if (c.y < minY) minY = c.y;
-            if (c.x > maxX) maxX = c.x;
-            if (c.y > maxY) maxY = c.y;
-        }
-
-        int w = maxX - minX + 1;
-        int h = maxY - minY + 1;
-
-        // Which tiles of the pool get glow: every one that has no wall on it.
-        bool[] foot = new bool[w * h];
-        bool any = false;
-        for (int i = 0; i < pool.cells.Count; i++)
-        {
-            Vector3Int c = pool.cells[i];
-            if (IsWallAt(map.GetCellCenterWorld(c))) continue;
-            foot[(c.y - minY) * w + (c.x - minX)] = true;
-            any = true;
-        }
-        if (!any)
-        {
-            Debug.LogWarning("HazardTileFx: every " + (pool.kind == Lava ? "lava" : "water") + " tile of the Tilemap '" + map.name +
-                             "' lies under a wall Tilemap, so it gets no glow. If that is wrong, set 'Wall Tilemaps' yourself.", this);
-            return;
-        }
-
+        bool bleeding = glowBleed > 0.05f;
+        int reach = bleeding ? Mathf.CeilToInt(glowBleed) : 0;
+        int pad = Mathf.CeilToInt(Mathf.Max(glowBleed, glowEdgeSoftness * 2f)) + 1;   // margin of tiles around a block that the light of its neighbours comes from
         int k = Mathf.Clamp(glowTexelsPerTile, 2, 16);
-        while (k > 2 && (w * k > 2048 || h * k > 2048)) k--;
-        int tw = w * k;
-        int th = h * k;
-        if (tw > 2048 || th > 2048)
-        {
-            Debug.LogWarning("HazardTileFx: a pool of " + (pool.kind == Lava ? "lava" : "water") + " is " + w + " x " + h +
-                             " tiles, too big to bake a glow for. It gets no glow (particles and sound still work).", this);
-            return;
-        }
 
-        float[] v = new float[tw * th];
-        for (int ty = 0; ty < th; ty++)
+        HashSet<Vector2Int> blocks = new HashSet<Vector2Int>();
+        for (int i = 0; i < pool.cells.Count; i++)
         {
-            int cy = ty / k;
-            for (int tx = 0; tx < tw; tx++)
+            Vector3Int c = pool.cells[i];
+            int bx0 = FloorDiv(c.x - reach, BlockTiles), bx1 = FloorDiv(c.x + reach, BlockTiles);
+            int by0 = FloorDiv(c.y - reach, BlockTiles), by1 = FloorDiv(c.y + reach, BlockTiles);
+            for (int by = by0; by <= by1; by++)
             {
-                if (foot[cy * w + tx / k]) v[ty * tw + tx] = 1f;
+                for (int bx = bx0; bx <= bx1; bx++) blocks.Add(new Vector2Int(bx, by));
             }
         }
 
-        bool soft = glowEdgeSoftness > 0.01f;
-        if (soft)
+        foreach (Vector2Int block in blocks) BakeBlock(pool, block.x, block.y, bleeding, pad, k);
+    }
+
+    private static int FloorDiv(int a, int b)
+    {
+        return Mathf.FloorToInt((float)a / b);
+    }
+
+    private void BakeBlock(Pool pool, int blockX, int blockY, bool bleeding, int pad, int k)
+    {
+        Tilemap map = pool.map;
+        int cw = BlockTiles + 2 * pad;     // the working grid, in tiles: the block plus a margin all round
+        int gx0 = blockX * BlockTiles - pad;
+        int gy0 = blockY * BlockTiles - pad;
+
+        // Tile by tile: is it lava / water (and not under a wall), and can light get onto it (not a wall, and floor when that is asked for)?
+        bool[] cellFoot = new bool[cw * cw];
+        bool[] cellOpen = new bool[cw * cw];
+        bool anyFoot = false;
+        for (int cy = 0; cy < cw; cy++)
         {
-            int radius = Mathf.Max(1, Mathf.RoundToInt(glowEdgeSoftness * k));
-            float[] temp = new float[v.Length];
-            BoxBlur(v, temp, tw, th, radius);
-            BoxBlur(v, temp, tw, th, radius);
+            for (int cx = 0; cx < cw; cx++)
+            {
+                Vector3Int cell = new Vector3Int(gx0 + cx, gy0 + cy, 0);
+                Vector3 centre3 = map.GetCellCenterWorld(cell);
+                Vector2 centre = new Vector2(centre3.x, centre3.y);
+
+                bool inPool = pool.set.Contains(cell);
+                bool lightCanReach = !IsWallAt(centre) && (inPool || !glowOnlyOverTiles || HasAnyTile(centre));
+
+                int index = cy * cw + cx;
+                cellOpen[index] = lightCanReach;
+                cellFoot[index] = inPool && lightCanReach;
+                if (cellFoot[index]) anyFoot = true;
+            }
+        }
+        if (!anyFoot) return;   // no lava or water anywhere near this block
+
+        // The same, in texels (k per tile).
+        int tw = cw * k;
+        int n = tw * tw;
+        float[] alpha = new float[n];
+        float[] open = new float[n];
+        float[] dist = bleeding ? new float[n] : null;
+
+        for (int ty = 0; ty < tw; ty++)
+        {
+            int rowCell = (ty / k) * cw;
+            for (int tx = 0; tx < tw; tx++)
+            {
+                int ci = rowCell + tx / k;
+                int i = ty * tw + tx;
+                open[i] = (bleeding ? cellOpen[ci] : cellFoot[ci]) ? 1f : 0f;
+                if (bleeding) dist[i] = cellFoot[ci] ? 0f : Unreached;
+                else alpha[i] = cellFoot[ci] ? 1f : 0f;
+            }
         }
 
-        // How far each texel is inside the pool, 0 at the edge and outside, 1 deep inside.
-        float[] edge = new float[v.Length];
-        for (int i = 0; i < edge.Length; i++) edge[i] = soft ? Mathf.Clamp01((v[i] - 0.5f) * GlowEdgeGain) : v[i];
+        if (bleeding)
+        {
+            // How far the light has to walk from the lava / water to each texel, going around walls, never through them.
+            SpreadDistance(dist, open, tw);
 
+            float range = glowBleed * k;
+            for (int i = 0; i < n; i++)
+            {
+                if (open[i] < 0.5f || dist[i] >= range) continue;
+                float t = 1f - dist[i] / range;
+                alpha[i] = t * t * (3f - 2f * t);   // 1 on the lava / water, easing out to 0 at the end of the bleed
+            }
+
+            // Smooth the result. Walls count for nothing in the average, so the light stays full strength right up to a wall and stops there.
+            int radius = Mathf.RoundToInt(glowEdgeSoftness * k);
+            if (radius >= 1)
+            {
+                float[] weight = new float[n];
+                float[] temp = new float[n];
+                System.Array.Copy(open, weight, n);
+                BoxBlur(alpha, temp, tw, tw, radius);
+                BoxBlur(alpha, temp, tw, tw, radius);
+                BoxBlur(weight, temp, tw, tw, radius);
+                BoxBlur(weight, temp, tw, tw, radius);
+                for (int i = 0; i < n; i++) alpha[i] = (open[i] > 0.5f && weight[i] > 0.0001f) ? Mathf.Clamp01(alpha[i] / weight[i]) : 0f;
+            }
+        }
+
+        // Cut the middle of the working grid (the block itself) out as a texture, once for each layer.
         bool banded = glowBands >= 2;
-        Material material = GlowMaterial();
-
-        // Where the first tile is: the glow sprite is w x h units big (k texels per unit); scaling it by the tile size lays it over the tiles.
-        Vector3 first = map.GetCellCenterWorld(new Vector3Int(minX, minY, 0));
+        int start = pad * k;
+        int rw = BlockTiles * k;
+        Vector3 first = map.GetCellCenterWorld(new Vector3Int(blockX * BlockTiles, blockY * BlockTiles, 0));
 
         for (int layer = 0; layer < GlowLayers; layer++)
         {
-            float seedX = Random.Range(0f, 200f);
-            float seedY = Random.Range(0f, 200f);
+            Color32[] pixels = new Color32[rw * rw];
+            bool anyLight = false;
 
-            Color32[] pixels = new Color32[tw * th];
-            for (int ty = 0; ty < th; ty++)
+            for (int ry = 0; ry < rw; ry++)
             {
-                float worldY = minY + (ty + 0.5f) / k;
-                for (int tx = 0; tx < tw; tx++)
+                int ty = start + ry;
+                float worldY = gy0 + (ty + 0.5f) / k;
+                for (int rx = 0; rx < rw; rx++)
                 {
-                    int index = ty * tw + tx;
-                    float worldX = minX + (tx + 0.5f) / k;
+                    int tx = start + rx;
+                    byte value = 0;
 
-                    float a = Mathf.Clamp01(edge[index] * (0.3f + 0.7f * Patches(worldX, worldY, seedX, seedY)));
-                    if (banded) a = Mathf.Round(a * glowBands) / glowBands;
-                    pixels[index] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+                    float a = alpha[ty * tw + tx];
+                    if (a > 0.004f)
+                    {
+                        float worldX = gx0 + (tx + 0.5f) / k;
+                        a = Mathf.Clamp01(a * (0.3f + 0.7f * Patches(worldX, worldY, pool.seedX[layer], pool.seedY[layer])));
+                        if (banded) a = Mathf.Round(a * glowBands) / glowBands;
+                        value = (byte)Mathf.RoundToInt(a * 255f);
+                        if (value > 0) anyLight = true;
+                    }
+                    pixels[ry * rw + rx] = new Color32(255, 255, 255, value);
                 }
             }
+            if (!anyLight) continue;
 
-            Texture2D tex = new Texture2D(tw, th, TextureFormat.RGBA32, false);
+            Texture2D tex = new Texture2D(rw, rw, TextureFormat.RGBA32, false);
             tex.wrapMode = TextureWrapMode.Clamp;
-            tex.filterMode = (soft && !banded) ? FilterMode.Bilinear : FilterMode.Point;
+            tex.filterMode = (bleeding && !banded) ? FilterMode.Bilinear : FilterMode.Point;
             tex.SetPixels32(pixels);
             tex.Apply(false, true);
 
-            Sprite sprite = Sprite.Create(tex, new Rect(0f, 0f, tw, th), Vector2.zero, k, 0, SpriteMeshType.FullRect);
+            // The sprite is BlockTiles units wide (k texels per unit); scaling by the tile size lays it over the tiles.
+            Sprite sprite = Sprite.Create(tex, new Rect(0f, 0f, rw, rw), Vector2.zero, k, 0, SpriteMeshType.FullRect);
 
-            GameObject go = new GameObject("Glow " + (layer == 0 ? "A" : "B") + (pool.kind == Lava ? " (lava)" : " (water)"));
+            GameObject go = new GameObject("Glow " + (layer == 0 ? "A" : "B") + (pool.kind == Lava ? " (lava) " : " (water) ") + blockX + "," + blockY);
             go.transform.SetParent(root.transform, false);
-            go.transform.position = new Vector3(first.x - pool.cellSize.x * 0.5f, first.y - pool.cellSize.y * 0.5f, 0.02f - layer * 0.01f);   // a hair behind the pieces
+            go.transform.position = new Vector3(first.x - pool.cellSize.x * 0.5f + pool.artOffset.x + glowOffset.x,
+                                                first.y - pool.cellSize.y * 0.5f + pool.artOffset.y + glowOffset.y,
+                                                first.z);
             go.transform.localScale = new Vector3(pool.cellSize.x, pool.cellSize.y, 1f);
 
+            bool soft = LayerIsSoft(layer);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = sprite;
-            if (material != null) sr.sharedMaterial = material;
             sr.color = new Color(1f, 1f, 1f, 0f);
+            Material material = MaterialFor(soft);
+            if (material != null) sr.sharedMaterial = material;
 
-            pool.layers[layer] = new GlowLayer { go = go, sr = sr, tex = tex, sprite = sprite };
+            pool.glow.Add(new GlowLayer { layer = layer, soft = soft, go = go, sr = sr, tex = tex, sprite = sprite });
         }
     }
 
-    // Soft bright and dark patches, about three tiles across with a little finer detail on top. 0..1.
+    // Soft bright and dark patches, about three tiles across with a little finer detail on top. 0..1. Made from world position, so
+    // neighbouring blocks match up with no seam.
     private static float Patches(float x, float y, float seedX, float seedY)
     {
         float coarse = Mathf.PerlinNoise(x * 0.3f + seedX, y * 0.3f + seedY);
         float fine = Mathf.PerlinNoise(x * 0.9f + seedX + 31f, y * 0.9f + seedY + 17f);
         return Mathf.Clamp01(Mathf.InverseLerp(0.25f, 0.75f, 0.65f * coarse + 0.35f * fine));
+    }
+
+    // Walking distance from the lava / water to every open texel, found by sweeping the grid back and forth. Closed texels (walls)
+    // are skipped, so the distance has to go around them.
+    private static void SpreadDistance(float[] dist, float[] open, int size)
+    {
+        const float side = 1f;
+        const float diagonal = 1.4142f;
+
+        for (int pass = 0; pass < 4; pass++)
+        {
+            bool changed = false;
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    int i = y * size + x;
+                    if (open[i] < 0.5f) continue;
+
+                    float d = dist[i];
+                    if (x > 0) d = Mathf.Min(d, dist[i - 1] + side);
+                    if (y > 0)
+                    {
+                        d = Mathf.Min(d, dist[i - size] + side);
+                        if (x > 0) d = Mathf.Min(d, dist[i - size - 1] + diagonal);
+                        if (x < size - 1) d = Mathf.Min(d, dist[i - size + 1] + diagonal);
+                    }
+                    if (d < dist[i])
+                    {
+                        dist[i] = d;
+                        changed = true;
+                    }
+                }
+            }
+
+            for (int y = size - 1; y >= 0; y--)
+            {
+                for (int x = size - 1; x >= 0; x--)
+                {
+                    int i = y * size + x;
+                    if (open[i] < 0.5f) continue;
+
+                    float d = dist[i];
+                    if (x < size - 1) d = Mathf.Min(d, dist[i + 1] + side);
+                    if (y < size - 1)
+                    {
+                        d = Mathf.Min(d, dist[i + size] + side);
+                        if (x < size - 1) d = Mathf.Min(d, dist[i + size + 1] + diagonal);
+                        if (x > 0) d = Mathf.Min(d, dist[i + size - 1] + diagonal);
+                    }
+                    if (d < dist[i])
+                    {
+                        dist[i] = d;
+                        changed = true;
+                    }
+                }
+            }
+
+            if (!changed) break;
+        }
     }
 
     // A blur that is fast on big grids (a sliding window). Anything outside the grid counts as 0.
@@ -1047,43 +1274,57 @@ public class HazardTileFx : MonoBehaviour
         }
     }
 
+    // ------------------------------------------------------------ the glow: every frame
+
     // The two layers breathe out of step with each other: where one fades, the other brightens, so the light seems to drift over the pool.
     private void UpdateGlow()
     {
-        float weaker = glowIsAdditive ? 1f : 0.55f;   // a plain overlay can only paint over, so it needs to be softer
+        float plain = shaderOk ? 1f : 0.55f;   // a plain overlay can only paint over, so it needs to be softer
 
         for (int i = 0; i < pools.Count; i++)
         {
             Pool pool = pools[i];
             Look look = pool.kind == Lava ? lava : water;
-            bool on = glowEnabled && look.enabled && look.glow && look.glowStrength > 0f;
+            bool on = glowEnabled && look.enabled && look.glow && look.glowOpacity > 0f && glowOpacityAll > 0f;
 
             float speed = 6.2832f / look.glowPulseSeconds;
             float envelope = 1f - look.glowPulse + look.glowPulse * (0.5f + 0.5f * Mathf.Sin(clock * speed + pool.phase));
-            float strength = look.glowStrength * envelope * weaker;
+            float strength = look.glowOpacity * glowOpacityAll * envelope * plain;
             float mainWave = 0.5f + 0.5f * Mathf.Sin(clock * speed * 1.3f + pool.phase * 2f);
-            float highlightWave = 0.5f + 0.5f * Mathf.Sin(clock * speed * 1.0f + pool.phase * 2f + 2.4f);
+            float highlightWave = 0.5f + 0.5f * Mathf.Sin(clock * speed + pool.phase * 2f + 2.4f);
 
-            for (int l = 0; l < GlowLayers; l++)
+            for (int g = 0; g < pool.glow.Count; g++)
             {
-                GlowLayer g = pool.layers[l];
-                if (g == null || g.sr == null) continue;
+                GlowLayer layer = pool.glow[g];
+                if (layer.sr == null) continue;
 
-                g.sr.enabled = on;
+                layer.sr.enabled = on;
                 if (!on) continue;
 
+                // The mode can be changed while playing: swap the material when this layer's kind changes.
+                bool soft = LayerIsSoft(layer.layer);
+                if (soft != layer.soft)
+                {
+                    layer.soft = soft;
+                    Material material = MaterialFor(soft);
+                    if (material != null) layer.sr.sharedMaterial = material;
+                }
+
+                // An additive layer on top of a soft one is kept gentler, or the two together would be too much.
+                float gain = (soft || glowMode == GlowMode.Additive) ? 1f : 0.6f;
+
                 Color c;
-                if (l == 0)
+                if (layer.layer == 0)
                 {
                     c = look.glowColour;
-                    c.a = Mathf.Clamp01(strength * (0.5f + 0.5f * mainWave));
+                    c.a = Mathf.Clamp01(strength * (0.5f + 0.5f * mainWave) * gain);
                 }
                 else
                 {
                     c = look.glowHighlight;
-                    c.a = Mathf.Clamp01(strength * 0.9f * highlightWave);
+                    c.a = Mathf.Clamp01(strength * 0.9f * highlightWave * gain);
                 }
-                g.sr.color = c;
+                layer.sr.color = c;
             }
         }
     }
@@ -1092,13 +1333,12 @@ public class HazardTileFx : MonoBehaviour
     {
         for (int i = 0; i < pools.Count; i++)
         {
-            for (int l = 0; l < GlowLayers; l++)
+            List<GlowLayer> glow = pools[i].glow;
+            for (int g = 0; g < glow.Count; g++)
             {
-                GlowLayer g = pools[i].layers[l];
-                if (g == null) continue;
-                if (g.go != null) Destroy(g.go);
-                if (g.sprite != null) Destroy(g.sprite);
-                if (g.tex != null) Destroy(g.tex);
+                if (glow[g].go != null) Destroy(glow[g].go);
+                if (glow[g].sprite != null) Destroy(glow[g].sprite);
+                if (glow[g].tex != null) Destroy(glow[g].tex);
             }
         }
         pools.Clear();
@@ -1111,10 +1351,16 @@ public class HazardTileFx : MonoBehaviour
 
         int lavaTiles = 0;
         int waterTiles = 0;
+        int glowSprites = 0;
+        string shifted = "";
         for (int i = 0; i < pools.Count; i++)
         {
             if (pools[i].kind == Lava) lavaTiles += pools[i].cells.Count;
             else waterTiles += pools[i].cells.Count;
+            glowSprites += pools[i].glow.Count;
+
+            Vector2 o = pools[i].artOffset;
+            if (o != Vector2.zero) shifted += " '" + pools[i].map.name + "' by (" + o.x.ToString("0.##") + ", " + o.y.ToString("0.##") + ")";
         }
 
         List<string> walls = new List<string>();
@@ -1127,7 +1373,9 @@ public class HazardTileFx : MonoBehaviour
                          (lavaTiles + waterTiles == 0 ? " (nothing matched: check the tile names, see FloorManager's Lava Name / Water Name)" : "") +
                          ". Walls: " + (walls.Count == 0 ? "none" : string.Join(", ", walls.ToArray())) + (autoWalls ? " (found by themselves)" : " (set by hand)") +
                          ". Drawn on sorting layer '" + SortingLayer.IDToName(pieceLayerId) + "', glow at order " + glowOrder + ", pieces at order " + pieceOrder +
-                         ". Glow: " + (glowIsAdditive ? "additive" : "plain overlay (no glow shader found, see 'Glow Shader')") + ".";
+                         ". Glow: " + glowSprites + " baked layer(s), " +
+                         (shaderOk ? glowMode.ToString() + " (shader found)" : "plain overlay (no glow shader found, see 'Glow Shader')") +
+                         (shifted.Length > 0 ? ". Tile art is drawn off its grid cells, so the glow was shifted to match:" + shifted : "") + ".";
 
         if (message == lastLog) return;
         lastLog = message;
@@ -1387,7 +1635,8 @@ public class HazardTileFx : MonoBehaviour
     {
         Look look = pool.kind == Lava ? lava : water;
         Vector3 centre = pool.map.GetCellCenterWorld(cell);
-        world = centre;
+        Vector2 artCentre = new Vector2(centre.x + pool.artOffset.x, centre.y + pool.artOffset.y);
+        world = artCentre;
         colour = look.fallbackColour;
 
         Sprite sprite = pool.map.GetSprite(cell);
@@ -1400,9 +1649,12 @@ public class HazardTileFx : MonoBehaviour
         int px = index % raw.w;
         int py = index / raw.w;
 
-        // Where that pixel is on the tile (the sprite is taken to fill the tile).
-        world = new Vector2(centre.x + ((px + 0.5f) / raw.w - 0.5f) * pool.cellSize.x,
-                            centre.y + ((py + 0.5f) / raw.h - 0.5f) * pool.cellSize.y);
+        // Where that pixel is, on the sprite as it is drawn.
+        Vector3 scale = pool.map.transform.lossyScale;
+        float spriteWidth = sprite.rect.width / Mathf.Max(0.0001f, sprite.pixelsPerUnit) * scale.x;
+        float spriteHeight = sprite.rect.height / Mathf.Max(0.0001f, sprite.pixelsPerUnit) * scale.y;
+        world = new Vector2(artCentre.x + ((px + 0.5f) / raw.w - 0.5f) * spriteWidth,
+                            artCentre.y + ((py + 0.5f) / raw.h - 0.5f) * spriteHeight);
 
         Color c = raw.pixels[index] * pool.map.GetColor(cell) * pool.map.color;   // the tile's tint counts too
         c.a = 1f;
@@ -1460,13 +1712,13 @@ public class HazardTileFx : MonoBehaviour
             float angle = Random.value * 6.2832f;
             Vector2 dir = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
             Vector2 reached = ReachableEnd(start, dir, distance);
-            float reach = (reached - start).magnitude;
-            if (reach > best)
+            float reachedDistance = (reached - start).magnitude;
+            if (reachedDistance > best)
             {
-                best = reach;
+                best = reachedDistance;
                 end = reached;
             }
-            if (reach >= distance * 0.99f) break;
+            if (reachedDistance >= distance * 0.99f) break;
         }
 
         hop.from = start;

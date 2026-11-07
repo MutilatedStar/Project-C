@@ -13,6 +13,10 @@ namespace Cainos.PixelArtTopDown_Basic
     /// Keys and buttons are set per player in the hub, so changing Player 2's keys never touches Player 1's.
     /// PlatformerCharacterController gets its input the same way.
     ///
+    /// JUMP: if the character also has a TopDownJump component, the Jump key / button starts a fake jump (this script only asks for it,
+    /// and stops the walk animation and footsteps while the character is in the air). Without that component the character simply cannot jump.
+    /// A key that is both Jump and a Move key would make that step a jump, so give Jump its own key in the PlayerInputHub.
+    ///
     /// It no longer listens for Tab / Esc / P itself. Pausing belongs to PauseManager (list this script in its
     /// "Player Input Scripts" so the player holds still), and a menu or inventory that should freeze just this
     /// player can set  PlayerInputSource.For(gameObject).Locked = true.
@@ -48,6 +52,7 @@ namespace Cainos.PixelArtTopDown_Basic
         private Animator animator;
         private Rigidbody2D rb;
         private PlayerInputSource input;
+        private TopDownJump jump;   // optional: the character just cannot jump without it
 
         private bool isSprinting;
 
@@ -65,6 +70,7 @@ namespace Cainos.PixelArtTopDown_Basic
             // The PlayerInputHub in the scene gives this character its player slot (keys, controller). The character itself needs
             // no input component: one is attached here, or taken over if an older prefab still has one.
             input = PlayerInputSource.For(gameObject);
+            jump = GetComponent<TopDownJump>();
 
             if (footstepSource != null)
             {
@@ -95,15 +101,20 @@ namespace Cainos.PixelArtTopDown_Basic
             // Run: tap to switch on/off, or hold. The rule lives in PlayerInputSource so both movement scripts share it.
             isSprinting = input.ResolveRun(sprintToggle, isSprinting);
 
+            // Jump: TopDownJump does the hop; this script only asks for it and then follows its state.
+            if (jump != null && input.JumpPressed) jump.TryJump();
+            bool airborne = jump != null && jump.IsAirborne;
+
             Vector2 move = input.Move;
             bool moving = move.sqrMagnitude > 0.0001f;
             Vector2 dir = analogMovement ? move : move.normalized;
 
             // Facing only changes while moving, so the player keeps looking the way they last walked.
             if (moving) animator.SetInteger("Direction", DirectionOf(move));
-            animator.SetBool("IsMoving", moving);
+            animator.SetBool("IsMoving", moving && !airborne);   // no walk cycle in the air: the idle frame is the jump pose
 
             float currentSpeed = isSprinting ? speed * sprintMultiplier : speed;
+            if (jump != null) currentSpeed *= jump.SpeedMultiplier;
 
             // What the physics really did last step. Read BEFORE the velocity is set below: pushing against a wall
             // (velocity near zero) must stay silent, and a stuck player is reported.
@@ -112,7 +123,7 @@ namespace Cainos.PixelArtTopDown_Basic
 
             // The velocity is applied FIRST, so a problem in the (purely cosmetic) footsteps can never stop the player.
             rb.linearVelocity = currentSpeed * dir;
-            HandleFootsteps(reallyMoving);
+            HandleFootsteps(reallyMoving && !airborne);
         }
 
         // ------------------------------------------------------------ "I press a key and nothing moves"
