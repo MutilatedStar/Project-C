@@ -609,7 +609,18 @@ public class PlayerInputSource : MonoBehaviour
     {
         _started = true;
         CheckForClashes();
+        LogKeysInUse();
         if (playerNumber > 1) StartCoroutine(WarnIfCoopOff());
+    }
+
+    // One line per player at the start: the Attack and Jump keys that are really in use, and whether the hub owns them.
+    // If a key does the wrong thing, this shows which list it came from.
+    private void LogKeysInUse()
+    {
+        KeyCode[][] t = Table;
+        Debug.Log("PlayerInputSource: Player " + playerNumber + " (" + (Hub != null ? "keys owned by the hub" : "own keys") + ") - " +
+                  "Attack: " + string.Join(", ", Array.ConvertAll(t[(int)PlayerAction.Attack], k => k.ToString())) +
+                  " | Jump: " + string.Join(", ", Array.ConvertAll(t[(int)PlayerAction.Jump], k => k.ToString())), this);
     }
 
     // Player 2's keys and controller work as soon as the character exists, but the camera split, HUD and rules follow the LocalCoop
@@ -781,10 +792,11 @@ public class PlayerInputSource : MonoBehaviour
         _tablesDirty = false;
     }
 
-    // TopDown only: a Jump list that contains a Move key is an old Platformer list (Space + W, Up Arrow). Walking must never jump,
-    // and the other keys in such a list are just as old, so the whole list is replaced by this player's default Jump keys.
-    // Old lists can sit on a prefab, in the hub, or in Solo Extra Keys; this catches all of them without touching the saved data.
-    // Only the table is changed, never the Inspector fields. A list with no Move key in it is left exactly as it is.
+    // TopDown only: Jump must never share a key with another action of the same player. A Jump list that contains a Move key is an old
+    // Platformer list (Space + W, Up Arrow) and would jump on every step; a Jump list that contains an Attack, Swap or other key
+    // makes that key do both (and the attack gets lost while the player is in the air). Either way the whole Jump list is replaced
+    // by this player's default Jump keys. Old lists can sit on a prefab, in the hub, or in Solo Extra Keys; this catches all of them
+    // without touching the saved data. Only the table is changed, never the Inspector fields. A clean list is left exactly as it is.
     private void DropMoveKeysFromJump(KeyCode[][] table, bool warn)
     {
         if (scheme != ControlScheme.TopDown) return;
@@ -792,12 +804,13 @@ public class PlayerInputSource : MonoBehaviour
         KeyCode[] jump = table[(int)PlayerAction.Jump];
         for (int i = 0; i < jump.Length; i++)
         {
-            if (!IsMoveKey(table, jump[i])) continue;
+            PlayerAction other;
+            if (!UsedByOtherAction(table, jump[i], out other)) continue;
 
             if (warn)
             {
-                Debug.LogWarning("PlayerInputSource: Player " + playerNumber + "'s Jump list has " + jump[i] + ", which is also a Move key " +
-                                 "(an old Platformer default), so the whole list is replaced by this player's default Jump keys. " +
+                Debug.LogWarning("PlayerInputSource: Player " + playerNumber + "'s Jump list has " + jump[i] + ", which is also used by " + other +
+                                 ", so the whole Jump list is replaced by this player's default Jump keys. " +
                                  "Set the Jump keys you want in the PlayerInputHub slot (or Keys By Player) to clear this message.", this);
             }
 
@@ -806,12 +819,17 @@ public class PlayerInputSource : MonoBehaviour
         }
     }
 
-    private static bool IsMoveKey(KeyCode[][] table, KeyCode key)
+    private static bool UsedByOtherAction(KeyCode[][] table, KeyCode key, out PlayerAction other)
     {
-        return Array.IndexOf(table[(int)PlayerAction.Left], key) >= 0
-            || Array.IndexOf(table[(int)PlayerAction.Right], key) >= 0
-            || Array.IndexOf(table[(int)PlayerAction.Up], key) >= 0
-            || Array.IndexOf(table[(int)PlayerAction.Down], key) >= 0;
+        for (int a = 0; a < ActionCount; a++)
+        {
+            if (a == (int)PlayerAction.Jump) continue;
+            if (Array.IndexOf(table[a], key) < 0) continue;
+            other = (PlayerAction)a;
+            return true;
+        }
+        other = PlayerAction.Jump;
+        return false;
     }
 
     private static KeyCode[][] ToTable(KeyBindings b)

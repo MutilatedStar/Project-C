@@ -46,7 +46,13 @@ using Cainos.PixelArtTopDown_Basic;
 /// Until a sword has a Sprite, a plain coloured bar is drawn so you can test right away.
 /// Once it has one, Sprite Scale / Sprite Width / Sprite Height resize it, and with Fit Hitbox To Sprite ON the
 /// sword's hit range follows the size you see (the yellow circle on the player shows it in the Scene view).
+///
+/// Jumping: the fake jump has no real height (the body never leaves the ground), so the two scripts share ONE number:
+/// TopDownJump.Height, how far up the jump is right now, in Unity units. Every frame this script lifts ONLY the blade (and its
+/// sparks) by that much, so the sword stays stuck to the player in the air. The spin glow stays on the ground like the player's
+/// shadow, and hit checks stay on the ground, where the body really is. (TopDownJump must expose Height; see LateUpdate.)
 /// </summary>
+[DefaultExecutionOrder(100)]   // after TopDownJump's own updates, so the blade is lifted by this frame's jump height
 [DisallowMultipleComponent]
 public class SwordController : MonoBehaviour
 {
@@ -255,6 +261,10 @@ public class SwordController : MonoBehaviour
     [Tooltip("Number keys 1-9 pick the matching sword in the list (Player 1's keyboard only). Turn off if those keys already do something else.")]
     [SerializeField] private bool numberKeysPickSword = true;
 
+    [Header("Jump")]
+    [Tooltip("Multiplies TopDownJump's jump height before the blade is lifted. 1 = the blade rises exactly as far as the jump height says. Raise it if the sword looks lower than the player's body in the air, lower it if it floats too high.")]
+    [Min(0f)] [SerializeField] private float jumpLiftScale = 1f;
+
     [Header("Swing")]
     [Tooltip("Where the swing is centred, relative to the player's position. If the player's pivot is at its feet, raise this to about chest height so the swing doesn't start from the ground.")]
     [SerializeField] private Vector2 pivotOffset = new Vector2(0f, 0.3f);
@@ -369,6 +379,9 @@ public class SwordController : MonoBehaviour
     private Transform visualTransform;   // the blade, sitting out along the pivot's +X
     private SpriteRenderer visual;
     private SpriteRenderer glowRenderer; // halo behind the player while the spin charges
+    private TopDownJump playerJump;       // optional: without it the blade simply stays at the hand
+    private int airFrames;               // frames spent in the air with a height of zero (for the one-time warning)
+    private bool liftWarned;
     private float activeReach;           // hit range of the equipped sword (its Reach, or measured from its sprite)
     private float activeHalfWidth;       // half the blade's thickness, widens the swing a little (0 = off)
 
@@ -443,6 +456,7 @@ public class SwordController : MonoBehaviour
         animator = GetComponent<Animator>();
         playerSprite = GetComponent<SpriteRenderer>();
         if (playerSprite == null) playerSprite = GetComponentInChildren<SpriteRenderer>();   // looked up BEFORE the blade exists, so it can't find itself
+        playerJump = GetComponent<TopDownJump>();
         playerHealth = GetComponentInParent<HealthComponent>();
         if (playerHealth == null) playerHealth = GetComponentInChildren<HealthComponent>();
 
@@ -738,6 +752,40 @@ public class SwordController : MonoBehaviour
         UpdateGlow();
     }
 
+    // ------------------------------------------------------------ jumping
+
+    // The fake jump never moves the body: its height is just a number inside TopDownJump. Each frame, after everything else
+    // has run, put the blade (with its sparks) that far up the screen. The glow is NOT moved: it stays on the ground.
+    // Not gated by the pause: a player frozen mid-air keeps the blade with them.
+    private void LateUpdate()
+    {
+        if (pivot == null) return;
+
+        float height = playerJump != null ? Mathf.Max(0f, playerJump.Height) * jumpLiftScale : 0f;
+        pivot.position = HandOnGround + new Vector3(0f, height, 0f);
+
+        // In the air with a height of zero for a whole jump means TopDownJump.Height is not returning the jump's height. Said once.
+        bool airborne = playerJump != null && playerJump.IsAirborne;
+        if (airborne && !liftWarned)
+        {
+            if (height > 0.0001f) liftWarned = true;   // it works: stop checking
+            else if (++airFrames == 15)
+            {
+                liftWarned = true;
+                Debug.LogWarning("SwordController on '" + name + "': the player is jumping but TopDownJump.Height is 0, so the sword cannot follow. " +
+                                 "Make Height return the variable that holds the jump's height (in Unity units).", this);
+            }
+        }
+        if (!airborne) airFrames = 0;
+    }
+
+    // The hand where the player's body really is. Hit checks use this one: the jump is only a picture, so a swing in the
+    // air hits what is under it and the knockback direction never changes.
+    private Vector3 HandOnGround
+    {
+        get { return transform.TransformPoint(pivotOffset); }
+    }
+
     private bool AttackPressed()
     {
         return input.AttackPressed;
@@ -931,7 +979,7 @@ public class SwordController : MonoBehaviour
     // (plus a little leeway). Each foe is hit at most once per swing / spin.
     private void HitSweep(SwordStats s, float fromAngle, float toAngle, bool spin)
     {
-        Vector2 origin = pivot.position;
+        Vector2 origin = HandOnGround;   // not pivot.position: that rises with a jump, the hit range must not
         int count = Physics2D.OverlapCircle(origin, activeReach, foeFilter, overlapBuffer);
         float span = Mathf.DeltaAngle(fromAngle, toAngle);   // signed: negative = clockwise
 
