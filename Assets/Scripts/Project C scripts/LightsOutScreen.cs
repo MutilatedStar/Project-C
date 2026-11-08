@@ -4,6 +4,10 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using TMPro;
 using Ilumisoft.HealthSystem;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.Controls;
+#endif
 
 /// <summary>
 /// The team-wipe screen. Put this on an object that is ALWAYS active in the dungeon scene (the same empty GameObject as
@@ -15,6 +19,8 @@ using Ilumisoft.HealthSystem;
 ///      appears with three buttons under it:  Retry / Level Select / Menu.
 ///   3. Choose with  W / S  or  Up / Down  (they wrap round), then press Enter or Space. Or just click a button
 ///      (the mouse also highlights whatever it moves over). All keys are lists in the Inspector.
+///      A CONTROLLER works too: D-pad or left stick up / down to choose, South (A on Xbox, Cross on PlayStation) to pick. ANY connected
+///      controller can drive the menu, not only the one a player was using, because every player's input is locked while this screen is up.
 ///
 ///   Retry          behind the black screen every player that counts is back on full health, put back on THEIR spot for the floor
 ///                  they are on (FloorController's Floors list, element 0 = floor 1), and that floor's foes start over. Then the
@@ -30,6 +36,8 @@ using Ilumisoft.HealthSystem;
 /// NEEDS (small additions in the files that came with this one):
 ///   FloorController.TryGetSpawnPoint(...) and the two LightsOutScreen lines in its Update / BlocksInput
 ///   FloorManager.RestartFloor()
+///   PlayerInputSource.cs (PadButton and ControllerSlots) for the controller part. That part needs the Input System package with
+///   Project Settings > Player > Active Input Handling = "Both"; without it the controller code is left out and the keyboard still works.
 /// And EndScreens must NOT load the Failure Ending scene on a team wipe any more, or it will leave the scene before this screen shows.
 /// </summary>
 [DisallowMultipleComponent]
@@ -51,6 +59,14 @@ public class LightsOutScreen : MonoBehaviour
     [SerializeField] private KeyCode[] downKeys = { KeyCode.S, KeyCode.DownArrow };
     [Tooltip("Picks the highlighted button. Clicking a button picks it too.")]
     [SerializeField] private KeyCode[] confirmKeys = { KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space };
+
+    [Header("Controller")]
+    [Tooltip("Lets any connected controller drive the menu: D-pad or left stick up / down to choose, a confirm button to pick. Needs the Input System package (Active Input Handling = Both).")]
+    [SerializeField] private bool useControllers = true;
+    [Tooltip("Picks the highlighted button. By POSITION, so it fits every pad: South = A (Xbox) / Cross (PlayStation) / B (Switch).")]
+    [SerializeField] private PadButton[] confirmButtons = { PadButton.South };
+    [Tooltip("How far the left stick must be pushed up or down to move the highlight one button. It has to come back to the middle before it moves again.")]
+    [SerializeField, Range(0.2f, 0.95f)] private float stickThreshold = 0.6f;
 
     [Header("Timing (seconds, real time)")]
     [Tooltip("Pause between the last player going down and the screen starting to fade, so the fall can be seen.")]
@@ -75,10 +91,14 @@ public class LightsOutScreen : MonoBehaviour
     [SerializeField] private string levelSelectText = "Level Select";
     [SerializeField] private string menuText = "Menu";
     [SerializeField] private string hintText = "W / S or Up / Down to choose,  Enter, Space or click to select";
+    [Tooltip("Shown on a second line under the hint while a controller is plugged in.")]
+    [SerializeField] private string controllerHintText = "D-pad or Left Stick to choose,  A / Cross to select";
 
     [Header("Look")]
     [Tooltip("Draw order of the screen's canvas. Higher is drawn on top of other canvases (the pause menu is 500).")]
     [SerializeField] private int canvasSortingOrder = 600;
+    [Tooltip("How far the black panel reaches past EVERY screen edge, in canvas units (the canvas is 1920 x 1080). It only has to hide the screen, so it is made far bigger than any screen or camera view.")]
+    [SerializeField, Min(0f)] private float blackOverscan = 5000f;
     [SerializeField] private Color titlePlateColor = new Color(0.35f, 0.06f, 0.06f, 0.95f);
     [SerializeField] private Color titleTextColor = new Color(1f, 0.93f, 0.8f, 1f);
     [SerializeField] private Color buttonColor = new Color(0.16f, 0.16f, 0.18f, 1f);
@@ -120,6 +140,8 @@ public class LightsOutScreen : MonoBehaviour
     private bool _menuReady;
     private float _acceptAfter;
     private Vector2 _lastMouse;
+    private int _stickDir;            // left stick last frame: -1 up, +1 down, 0 neutral (so a held stick is one step, not one per frame)
+    private TMP_Text _hintLabel;
 
     // What we changed, so it can be put back.
     private float _savedTimeScale = 1f;
@@ -187,6 +209,8 @@ public class LightsOutScreen : MonoBehaviour
         int move = 0;
         if (AnyDown(upKeys)) move--;
         if (AnyDown(downKeys)) move++;
+        move += PadMove();
+        move = Mathf.Clamp(move, -1, 1);
         if (move != 0) SetSelected((_selected + move + ButtonCount) % ButtonCount);
 
         // The mouse only takes over the highlight when it actually moves, so a resting cursor doesn't fight the keys.
@@ -203,7 +227,7 @@ public class LightsOutScreen : MonoBehaviour
             SetSelected(hover);
             Activate(hover);
         }
-        else if (AnyDown(confirmKeys))
+        else if (AnyDown(confirmKeys) || PadConfirmPressed())
         {
             Activate(_selected);
         }
@@ -217,6 +241,98 @@ public class LightsOutScreen : MonoBehaviour
             if (Input.GetKeyDown(keys[i])) return true;
         }
         return false;
+    }
+
+    // ------------------------------------------------------------ controller
+    //
+    // Every player's PlayerInputSource is Locked while this screen is up (so nobody can walk around behind the menu), and a locked
+    // source reports "nothing pressed". So the pads are read here directly, through ControllerSlots (the same pad numbering the
+    // players use). Any connected controller can drive the menu, not only the one a player happened to be using.
+
+    // -1 = up, +1 = down, 0 = nothing. One step per D-pad press, and one step per push of the left stick.
+    private int PadMove()
+    {
+#if ENABLE_INPUT_SYSTEM
+        if (!useControllers) return 0;
+
+        int move = 0;
+        for (int slot = 0; slot < ControllerSlots.MaxSlots; slot++)
+        {
+            Gamepad pad = ControllerSlots.Get(slot);
+            if (pad == null) continue;
+
+            if (pad.dpad.up.wasPressedThisFrame) move--;
+            if (pad.dpad.down.wasPressedThisFrame) move++;
+        }
+
+        int stick = ReadStickDirection(_stickDir);
+        if (stick != 0 && stick != _stickDir) move += stick;   // only on the frame the stick GOES up or down
+        _stickDir = stick;
+
+        return move;
+#else
+        return 0;
+#endif
+    }
+
+    // Which way the left stick is pushed: -1 up, +1 down, 0 neutral. It has to pass stickThreshold to count and drop under half of it
+    // to let go, so a stick resting near the line can't flicker. 'previous' is last frame's answer.
+    private int ReadStickDirection(int previous)
+    {
+#if ENABLE_INPUT_SYSTEM
+        if (!useControllers) return 0;
+
+        float y = 0f;
+        for (int slot = 0; slot < ControllerSlots.MaxSlots; slot++)
+        {
+            Gamepad pad = ControllerSlots.Get(slot);
+            if (pad == null) continue;
+
+            float v = pad.leftStick.ReadValue().y;
+            if (Mathf.Abs(v) > Mathf.Abs(y)) y = v;
+        }
+
+        if (y >= stickThreshold) return -1;    // pushed up = the button above
+        if (y <= -stickThreshold) return 1;    // pushed down = the button below
+        if (Mathf.Abs(y) < stickThreshold * 0.5f) return 0;
+        return previous;
+#else
+        return 0;
+#endif
+    }
+
+    // True on the frame a confirm button (South by default) goes down on any connected controller.
+    private bool PadConfirmPressed()
+    {
+#if ENABLE_INPUT_SYSTEM
+        if (!useControllers || confirmButtons == null) return false;
+
+        for (int slot = 0; slot < ControllerSlots.MaxSlots; slot++)
+        {
+            Gamepad pad = ControllerSlots.Get(slot);
+            if (pad == null) continue;
+
+            for (int b = 0; b < confirmButtons.Length; b++)
+            {
+                ButtonControl control = ControllerSlots.Control(pad, confirmButtons[b]);
+                if (control != null && control.wasPressedThisFrame) return true;
+            }
+        }
+#endif
+        return false;
+    }
+
+    // The keyboard hint, plus a controller line while a pad is plugged in.
+    private void RefreshHint()
+    {
+        string text = hintText;
+#if ENABLE_INPUT_SYSTEM
+        if (useControllers && ControllerSlots.ConnectedCount > 0 && !string.IsNullOrEmpty(controllerHintText))
+        {
+            text += "\n" + controllerHintText;
+        }
+#endif
+        if (_hintLabel != null) _hintLabel.text = text;
     }
 
     private int ButtonUnderPointer(Vector2 screenPoint)
@@ -266,6 +382,7 @@ public class LightsOutScreen : MonoBehaviour
         _menuGroup.alpha = 0f;
         _titleRect.localScale = Vector3.one;
         SetSelected(0);
+        RefreshHint();
         _root.SetActive(true);
 
         yield return Fade(_blackGroup, 0f, 1f, fadeInTime);
@@ -276,6 +393,7 @@ public class LightsOutScreen : MonoBehaviour
         yield return Fade(_menuGroup, 0f, 1f, menuFadeTime);
 
         _lastMouse = Input.mousePosition;
+        _stickDir = ReadStickDirection(0);   // a stick already held up / down when the menu opens counts as "already there"
         _acceptAfter = Time.unscaledTime + acceptDelay;
         _menuReady = true;
     }
@@ -594,8 +712,13 @@ public class LightsOutScreen : MonoBehaviour
         Stretch(root);
         _root = root.gameObject;
 
+        // Stretched to the canvas, then pushed out blackOverscan canvas units past EVERY edge. It only has to hide the screen, so it is far
+        // bigger than any screen, window size or camera view (split-screen viewports, letterboxing and ultrawide included).
         RectTransform black = NewRect("Black", root);
         Stretch(black);
+        float overscan = Mathf.Max(0f, blackOverscan);
+        black.offsetMin = new Vector2(-overscan, -overscan);
+        black.offsetMax = new Vector2(overscan, overscan);
         black.gameObject.AddComponent<Image>().color = Color.black;   // also swallows clicks meant for the game behind it
         _blackGroup = black.gameObject.AddComponent<CanvasGroup>();
 
@@ -637,7 +760,8 @@ public class LightsOutScreen : MonoBehaviour
             _buttonLabels[i] = label;
         }
 
-        TextMeshProUGUI hint = NewText("Hint", menu, hintText, 30f, new Vector2(0f, -350f), new Vector2(1400f, 50f));
+        TextMeshProUGUI hint = NewText("Hint", menu, hintText, 30f, new Vector2(0f, -350f), new Vector2(1400f, 110f));   // two lines when a controller is plugged in
+        _hintLabel = hint;
         hint.color = new Color(1f, 1f, 1f, 0.55f);
 
         SetSelected(0);

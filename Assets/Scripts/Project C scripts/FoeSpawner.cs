@@ -8,6 +8,10 @@ using Ilumisoft.HealthSystem;
 ///
 ///   - Each level has its OWN list of foe types, each with its own amount (the total spawned that level).
 ///   - Foes appear a set number of tiles from the player. Harder difficulty = shorter distance.
+///   - SPAWN AREAS: foes only spawn while the player is inside a square area, and only at points inside that same square.
+///     Each area is marked by an EMPTY GameObject (its middle) plus a square "radius" in tiles. Where there is no area
+///     (the player is outside every square, or no areas are listed) no foes spawn. Turn "Restrict To Spawn Areas" off
+///     to go back to spawning around the player anywhere on the floor.
 ///   - At most "maxAlive" foes exist at once. Harder difficulty = higher cap and more foes per level.
 ///   - Foes arrive one at a time with a COOLDOWN between spawns. Harder difficulty = shorter cooldown (foes arrive faster),
 ///     easier = longer cooldown.
@@ -56,6 +60,16 @@ public class FoeSpawner : MonoBehaviour
         public FoeEntry[] foes;
     }
 
+    /// <summary>A square patch of the stage where foes may spawn. Marked in the scene by an empty GameObject.</summary>
+    [System.Serializable]
+    public class SpawnArea
+    {
+        [Tooltip("An EMPTY GameObject placed at the middle of the area. Move it to move the area.")]
+        public Transform center;
+        [Tooltip("The square's 'radius' in TILES: the distance from the middle to each edge. 8 = a square 16 tiles wide and 16 tiles tall.")]
+        [Min(0f)] public float radiusTiles = 8f;
+    }
+
     // ------------------------------------------------------------ inspector
 
     [Header("Target")]
@@ -101,6 +115,14 @@ public class FoeSpawner : MonoBehaviour
     [Tooltip("Random points tried per spawn before giving up until the next frame.")]
     [SerializeField] private int maxPlacementAttempts = 30;
 
+    [Header("Spawn areas")]
+    [Tooltip("ON: foes only spawn while the player is standing inside one of the square areas below, and only at points inside that " +
+             "same square. Outside every area (or with no areas listed) NOTHING spawns. OFF: foes spawn around the player anywhere on the floor, as before.")]
+    [SerializeField] private bool restrictToSpawnAreas = true;
+    [Tooltip("One entry per area. Each is a square marked by an EMPTY GameObject (its middle) and a radius in tiles. " +
+             "Areas can overlap: the first one in the list that holds the player is the one used. Entries with no object assigned are ignored.")]
+    [SerializeField] private SpawnArea[] spawnAreas;
+
     [Header("Timing")]
     [Tooltip("Cooldown between spawns, in SECONDS, while below the cap (Easy / Normal / Hard). A SHORTER cooldown means foes arrive faster, " +
              "so Hard has the smallest number and Easy the biggest. Read live on every spawn, so changing the difficulty mid-run takes effect straight away.")]
@@ -141,6 +163,8 @@ public class FoeSpawner : MonoBehaviour
 
     private float failedSpawnTime;
     private bool warnedNoSpawnPoint;
+    private bool warnedNoAreas;
+    private SpawnArea activeArea;   // the area the player is standing in right now (null = none)
 
     private readonly List<FoeController> alive = new List<FoeController>();
     private int[] remaining;            // foes still to spawn, one number per entry in the current level
@@ -380,6 +404,21 @@ public class FoeSpawner : MonoBehaviour
             return;
         }
 
+        // Spawn areas: foes only come while the player is inside one of the squares.
+        if (restrictToSpawnAreas)
+        {
+            activeArea = FindAreaAt(player.position);
+            if (activeArea == null)
+            {
+                // Outside every area: nothing spawns. The timer is held at a full cooldown, so the first foe of a visit
+                // arrives one cooldown AFTER the player steps in, instead of popping in the same instant.
+                spawnTimer = SpawnCooldown;
+                failedSpawnTime = 0f;
+                WarnIfNoAreasSetUp();
+                return;
+            }
+        }
+
         spawnTimer -= Time.deltaTime;
         if (spawnTimer > 0f || alive.Count >= maxAliveNow) return;
 
@@ -486,7 +525,10 @@ public class FoeSpawner : MonoBehaviour
 
     private bool IsValidSpawn(Vector2 p, Vector2 playerPos)
     {
-        // 0. Optional outside rule (FloorManager). Checked BEFORE the foe is created, so it never appears somewhere
+        // 0a. Spawn areas: the point must be inside the square the player is standing in (cheapest check, so it goes first).
+        if (restrictToSpawnAreas && !InArea(activeArea, p)) return false;
+
+        // 0b. Optional outside rule (FloorManager). Checked BEFORE the foe is created, so it never appears somewhere
         //    it would be removed from afterwards.
         if (SpawnPointFilter != null && !SpawnPointFilter(p)) return false;
 
@@ -504,6 +546,47 @@ public class FoeSpawner : MonoBehaviour
         if (requireClearLine && LineBlocked(playerPos, p)) return false;
 
         return true;
+    }
+
+    // ------------------------------------------------------------ spawn areas
+
+    // True if the point is inside the square (an axis-aligned box: the same distance from the middle on X and on Y).
+    private bool InArea(SpawnArea area, Vector2 p)
+    {
+        if (area == null || area.center == null) return false;
+
+        float radius = area.radiusTiles * TileSize;
+        Vector2 middle = area.center.position;
+        return Mathf.Abs(p.x - middle.x) <= radius && Mathf.Abs(p.y - middle.y) <= radius;
+    }
+
+    // The first area in the list that holds this point, or null if it is in none of them.
+    private SpawnArea FindAreaAt(Vector2 p)
+    {
+        if (spawnAreas == null) return null;
+        for (int i = 0; i < spawnAreas.Length; i++)
+        {
+            if (InArea(spawnAreas[i], p)) return spawnAreas[i];
+        }
+        return null;
+    }
+
+    // One warning if "Restrict To Spawn Areas" is on but no area has an object assigned, since then nothing can ever spawn.
+    private void WarnIfNoAreasSetUp()
+    {
+        if (warnedNoAreas) return;
+
+        if (spawnAreas != null)
+        {
+            for (int i = 0; i < spawnAreas.Length; i++)
+            {
+                if (spawnAreas[i] != null && spawnAreas[i].center != null) return;   // at least one real area exists
+            }
+        }
+
+        warnedNoAreas = true;
+        Debug.LogWarning("FoeSpawner: 'Restrict To Spawn Areas' is on but no spawn area has an empty object assigned, so no foes " +
+                         "will spawn. Add an area under Spawn Areas (drag an empty GameObject into Center), or turn the option off.", this);
     }
 
     private static bool OnAnyTile(Tilemap[] maps, Vector2 worldPos)
@@ -533,6 +616,23 @@ public class FoeSpawner : MonoBehaviour
     }
 
     // ------------------------------------------------------------ editor helper
+
+    // The spawn area squares are always drawn in the Scene view (cyan; green while the player is inside that one),
+    // so you can place and size them without playing.
+    private void OnDrawGizmos()
+    {
+        if (!restrictToSpawnAreas || spawnAreas == null) return;
+
+        for (int i = 0; i < spawnAreas.Length; i++)
+        {
+            SpawnArea area = spawnAreas[i];
+            if (area == null || area.center == null) continue;
+
+            float size = area.radiusTiles * TileSize * 2f;
+            Gizmos.color = Application.isPlaying && area == activeArea ? Color.green : Color.cyan;
+            Gizmos.DrawWireCube(area.center.position, new Vector3(size, size, 0f));
+        }
+    }
 
     // Select the spawner while playing to see the spawn ring for the current difficulty (yellow).
     private void OnDrawGizmosSelected()
