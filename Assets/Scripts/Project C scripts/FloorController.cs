@@ -148,7 +148,7 @@ public class FloorController : MonoBehaviour
 
     /// <summary>True when the players and the notebook should ignore the keyboard: a floor change is running, the floor
     /// change ended earlier this very frame (so the same key press can't also open the notebook), or the pause menu asks for it.</summary>
-    public static bool BlocksInput => IsChangingFloor || closedFrame == Time.frameCount || PauseController.BlocksInput;
+    public static bool BlocksInput => IsChangingFloor || closedFrame == Time.frameCount || PauseController.BlocksInput || LightsOutScreen.BlocksInput;
 
     /// <summary>Fires after the players have been moved to a new floor, with the new floor number.</summary>
     public static event System.Action<int> FloorChanged;
@@ -234,6 +234,7 @@ public class FloorController : MonoBehaviour
         if (IsChangingFloor) return;
         if (PauseController.IsPaused) return;   // nothing under the players counts while a menu is up
         if (MenuController.IsOpen) return;
+        if (LightsOutScreen.IsActive) return;   // the team is wiped: nothing under the downed players counts
 
         CheckDoors();
         if (IsChangingFloor) return;   // a door just fired
@@ -710,6 +711,26 @@ public class FloorController : MonoBehaviour
         {
             if (foes[i] != null) foes[i].Remove();
         }
+    }
+
+    /// <summary>
+    /// Where this player lands on this floor: their own point in the Floors list (or Player 1's point if they have none), with the last
+    /// element reused past the end, exactly like a floor change. False if the floor has no point for them. LightsOutScreen uses it for Retry.
+    /// </summary>
+    public bool TryGetSpawnPoint(int floor, int playerNumber, out Vector2 position)
+    {
+        position = Vector2.zero;
+        if (floors == null || floors.Length == 0) return false;
+
+        FloorLink row = floors[Mathf.Clamp(floor - 1, 0, floors.Length - 1)];
+        if (row == null) return false;
+
+        Transform spawn = row.For(playerNumber);
+        if (spawn == null && playerNumber > 1) spawn = row.For(1);
+        if (spawn == null) return false;
+
+        position = spawn.position;
+        return true;
     }
 
     // Moves every player that exists to THEIR OWN point for this floor.

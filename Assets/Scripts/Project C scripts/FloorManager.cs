@@ -282,6 +282,16 @@ public class FloorManager : MonoBehaviour
     }
 
     /// <summary>
+    /// Starts the CURRENT floor's foes over from the beginning (a Retry after the team was wiped). The floor number does not change, and
+    /// nobody is healed. The spawner clears any foe still left. LightsOutScreen calls this behind its black screen.
+    /// </summary>
+    public void RestartFloor()
+    {
+        invalidSince.Clear();
+        if (spawner != null) spawner.StartLevel(CurrentFloor - 1);
+    }
+
+    /// <summary>
     /// Destroys every foe in the scene, including ones the spawner didn't make (hand-placed foes).
     /// Destroying skips FoeController.Die(), so no score is awarded for cleared foes.
     /// </summary>

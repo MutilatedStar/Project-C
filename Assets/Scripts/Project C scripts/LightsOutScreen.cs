@@ -1,0 +1,685 @@
+using System.Collections;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+using TMPro;
+using Ilumisoft.HealthSystem;
+
+/// <summary>
+/// The team-wipe screen. Put this on an object that is ALWAYS active in the dungeon scene (the same empty GameObject as
+/// FloorController / PauseController is fine). There is nothing to wire up: the black screen, the "LIGHTS OUT" banner and the
+/// three buttons are built by this script.
+///
+///   1. CoopHealth.TeamWiped fires (the last player that counts has gone down).
+///   2. After a short pause (so the fall can be seen) the screen fades to black, the game freezes, and a big LIGHTS OUT banner
+///      appears with three buttons under it:  Retry / Level Select / Menu.
+///   3. Choose with  W / S  or  Up / Down  (they wrap round), then press Enter or Space. Or just click a button
+///      (the mouse also highlights whatever it moves over). All keys are lists in the Inspector.
+///
+///   Retry          behind the black screen every player that counts is back on full health, put back on THEIR spot for the floor
+///                  they are on (FloorController's Floors list, element 0 = floor 1), and that floor's foes start over. Then the
+///                  screen fades out. On the FIRST floor (room 0) they go back to where they spawned when the scene started.
+///   Level Select   resets the run (GameReset.ResetRun, the same as the pause menu's Quit) and loads the Level Select scene.
+///   Menu           resets the run and loads the Main Menu scene.
+///
+/// While it is up: players are locked, foes are frozen, Time.timeScale is 0, hazards and doors do nothing, pausing is switched off, and the
+/// mouse cursor is freed. All of that is put back when the screen is gone.
+///
+/// Other scripts can read:  LightsOutScreen.IsActive,  LightsOutScreen.BlocksInput (FloorController.BlocksInput already includes it).
+///
+/// NEEDS (small additions in the files that came with this one):
+///   FloorController.TryGetSpawnPoint(...) and the two LightsOutScreen lines in its Update / BlocksInput
+///   FloorManager.RestartFloor()
+/// And EndScreens must NOT load the Failure Ending scene on a team wipe any more, or it will leave the scene before this screen shows.
+/// </summary>
+[DisallowMultipleComponent]
+public class LightsOutScreen : MonoBehaviour
+{
+    private const int MaxPlayers = 4;
+    private const int ButtonCount = 3;
+
+    // ------------------------------------------------------------ inspector
+
+    [Header("Scenes")]
+    [Tooltip("Exact name of the Level Select scene (must be in Scenes In Build). \"LevelSelect\" and \"Level Select\" are tried if this can't be loaded.")]
+    [SerializeField] private string levelSelectSceneName = "LevelSelect";
+    [Tooltip("Exact name of the Main Menu scene (must be in Scenes In Build). \"MainMenu\" and \"Main Menu\" are tried if this can't be loaded.")]
+    [SerializeField] private string mainMenuSceneName = "MainMenu";
+
+    [Header("Keys")]
+    [SerializeField] private KeyCode[] upKeys = { KeyCode.W, KeyCode.UpArrow };
+    [SerializeField] private KeyCode[] downKeys = { KeyCode.S, KeyCode.DownArrow };
+    [Tooltip("Picks the highlighted button. Clicking a button picks it too.")]
+    [SerializeField] private KeyCode[] confirmKeys = { KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space };
+
+    [Header("Timing (seconds, real time)")]
+    [Tooltip("Pause between the last player going down and the screen starting to fade, so the fall can be seen.")]
+    [SerializeField, Min(0f)] private float delayBeforeFade = 1f;
+    [SerializeField, Min(0f)] private float fadeInTime = 1.5f;
+    [Tooltip("How long the LIGHTS OUT banner takes to appear once the screen is black. The buttons follow.")]
+    [SerializeField, Min(0f)] private float titleFadeTime = 0.5f;
+    [SerializeField, Min(0f)] private float menuFadeTime = 0.4f;
+    [Tooltip("After Retry: seconds the screen stays black once everyone is back in place, so a smoothed camera can catch up.")]
+    [SerializeField, Min(0f)] private float holdTime = 0.75f;
+    [SerializeField, Min(0f)] private float fadeOutTime = 1f;
+    [Tooltip("Buttons ignore Enter / Space / clicks for this long after they appear, so a key that was being mashed can't pick one.")]
+    [SerializeField, Min(0f)] private float acceptDelay = 0.3f;
+
+    [Header("What it freezes")]
+    [Tooltip("Sets Time.timeScale to 0 while the menu is up (put back afterwards). Foes and players are held still either way.")]
+    [SerializeField] private bool freezeTime = true;
+
+    [Header("Text")]
+    [SerializeField] private string titleText = "LIGHTS OUT";
+    [SerializeField] private string retryText = "Retry";
+    [SerializeField] private string levelSelectText = "Level Select";
+    [SerializeField] private string menuText = "Menu";
+    [SerializeField] private string hintText = "W / S or Up / Down to choose,  Enter, Space or click to select";
+
+    [Header("Look")]
+    [Tooltip("Draw order of the screen's canvas. Higher is drawn on top of other canvases (the pause menu is 500).")]
+    [SerializeField] private int canvasSortingOrder = 600;
+    [SerializeField] private Color titlePlateColor = new Color(0.35f, 0.06f, 0.06f, 0.95f);
+    [SerializeField] private Color titleTextColor = new Color(1f, 0.93f, 0.8f, 1f);
+    [SerializeField] private Color buttonColor = new Color(0.16f, 0.16f, 0.18f, 1f);
+    [SerializeField] private Color buttonTextColor = new Color(0.75f, 0.75f, 0.78f, 1f);
+    [SerializeField] private Color selectedButtonColor = new Color(0.95f, 0.75f, 0.25f, 1f);
+    [SerializeField] private Color selectedTextColor = new Color(0.1f, 0.07f, 0.02f, 1f);
+
+    // ------------------------------------------------------------ public / shared
+
+    /// <summary>True from the moment the team is wiped until the screen is gone again (or the next scene is loading).</summary>
+    public static bool IsActive { get; private set; }
+
+    /// <summary>True while the screen is up, and for the rest of the frame in which it closed (so the key that picked Retry can't also move a player).</summary>
+    public static bool BlocksInput => IsActive || closedFrame == Time.frameCount;
+
+    private static int closedFrame = -1;
+
+    // Static values survive between Play sessions when "Reload Domain" is switched off, so they are reset by hand.
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        IsActive = false;
+        closedFrame = -1;
+    }
+
+    // ------------------------------------------------------------ state
+
+    private GameObject _root;
+    private CanvasGroup _blackGroup;
+    private CanvasGroup _contentGroup;
+    private CanvasGroup _titleGroup;
+    private CanvasGroup _menuGroup;
+    private RectTransform _titleRect;
+    private readonly RectTransform[] _buttonRects = new RectTransform[ButtonCount];
+    private readonly Image[] _buttonImages = new Image[ButtonCount];
+    private readonly TMP_Text[] _buttonLabels = new TMP_Text[ButtonCount];
+
+    private int _selected;
+    private bool _menuReady;
+    private float _acceptAfter;
+    private Vector2 _lastMouse;
+
+    // What we changed, so it can be put back.
+    private float _savedTimeScale = 1f;
+    private bool _timeFrozen;
+    private bool _foesFrozen;
+    private bool _cursorSaved;
+    private CursorLockMode _savedLock;
+    private bool _savedCursorVisible;
+    private bool _pauseChanged;
+    private bool _pauseWasAllowed;
+
+    // Where each player first stood in this scene: "room 0" sends them back here.
+    private readonly Vector2[] _startPositions = new Vector2[MaxPlayers + 1];
+    private readonly bool[] _hasStart = new bool[MaxPlayers + 1];
+
+    private FloorController _floorController;
+    private bool _warnedNoSpot;
+
+    // ------------------------------------------------------------ lifecycle
+
+    private void Awake()
+    {
+        IsActive = false;
+        BuildUi();
+        _root.SetActive(false);
+    }
+
+    private void OnEnable()
+    {
+        CoopHealth.TeamWiped += HandleTeamWiped;
+    }
+
+    private void OnDisable()
+    {
+        CoopHealth.TeamWiped -= HandleTeamWiped;
+    }
+
+    private void OnDestroy()
+    {
+        // Never leave the next scene frozen or locked.
+        if (IsActive) ReleaseWorld();
+    }
+
+    private void HandleTeamWiped()
+    {
+        if (IsActive) return;
+
+        IsActive = true;       // from this moment the players hold still and the doors and hazards do nothing
+        LockPlayers(true);
+        StartCoroutine(ShowRoutine());
+    }
+
+    // ------------------------------------------------------------ main loop
+
+    private void Update()
+    {
+        if (!IsActive)
+        {
+            RecordStartPositions();
+            return;
+        }
+        if (!_menuReady) return;
+
+        // Up / down: one step per press, wrapping round.
+        int move = 0;
+        if (AnyDown(upKeys)) move--;
+        if (AnyDown(downKeys)) move++;
+        if (move != 0) SetSelected((_selected + move + ButtonCount) % ButtonCount);
+
+        // The mouse only takes over the highlight when it actually moves, so a resting cursor doesn't fight the keys.
+        Vector2 mouse = Input.mousePosition;
+        bool mouseMoved = (mouse - _lastMouse).sqrMagnitude > 1f;
+        _lastMouse = mouse;
+        int hover = ButtonUnderPointer(mouse);
+        if (hover >= 0 && mouseMoved) SetSelected(hover);
+
+        if (Time.unscaledTime < _acceptAfter) return;
+
+        if (hover >= 0 && Input.GetMouseButtonDown(0))
+        {
+            SetSelected(hover);
+            Activate(hover);
+        }
+        else if (AnyDown(confirmKeys))
+        {
+            Activate(_selected);
+        }
+    }
+
+    private static bool AnyDown(KeyCode[] keys)
+    {
+        if (keys == null) return false;
+        for (int i = 0; i < keys.Length; i++)
+        {
+            if (Input.GetKeyDown(keys[i])) return true;
+        }
+        return false;
+    }
+
+    private int ButtonUnderPointer(Vector2 screenPoint)
+    {
+        for (int i = 0; i < ButtonCount; i++)
+        {
+            // Screen Space - Overlay canvas, so no camera.
+            if (RectTransformUtility.RectangleContainsScreenPoint(_buttonRects[i], screenPoint, null)) return i;
+        }
+        return -1;
+    }
+
+    // Remembers where each player stood the first time we saw them. Not while a floor change is moving them around.
+    private void RecordStartPositions()
+    {
+        if (FloorController.IsChangingFloor) return;
+
+        for (int i = 0; i < CoopHealth.Players.Count; i++)
+        {
+            CoopHealth p = CoopHealth.Players[i];
+            if (p == null) continue;
+
+            int n = p.PlayerNumber;
+            if (n < 1 || n > MaxPlayers || _hasStart[n]) continue;
+
+            _startPositions[n] = p.transform.position;
+            _hasStart[n] = true;
+        }
+    }
+
+    // ------------------------------------------------------------ showing the screen
+
+    private IEnumerator ShowRoutine()
+    {
+        // A floor change that is mid-way finishes first (a hit can land just as the doors close).
+        while (FloorController.IsChangingFloor) yield return null;
+
+        // Let the last player's fall be seen before it goes dark.
+        if (delayBeforeFade > 0f) yield return new WaitForSecondsRealtime(delayBeforeFade);
+
+        SaveAndFreeCursor();
+        BlockPausing(true);
+
+        _blackGroup.alpha = 0f;
+        _contentGroup.alpha = 1f;
+        _titleGroup.alpha = 0f;
+        _menuGroup.alpha = 0f;
+        _titleRect.localScale = Vector3.one;
+        SetSelected(0);
+        _root.SetActive(true);
+
+        yield return Fade(_blackGroup, 0f, 1f, fadeInTime);
+
+        FreezeWorld();
+
+        yield return PopTitle();
+        yield return Fade(_menuGroup, 0f, 1f, menuFadeTime);
+
+        _lastMouse = Input.mousePosition;
+        _acceptAfter = Time.unscaledTime + acceptDelay;
+        _menuReady = true;
+    }
+
+    // The banner fades in while settling from slightly too big to its normal size.
+    private IEnumerator PopTitle()
+    {
+        for (float t = 0f; t < titleFadeTime; t += Time.unscaledDeltaTime)
+        {
+            float k = Mathf.Clamp01(t / titleFadeTime);
+            float eased = 1f - (1f - k) * (1f - k);
+            _titleGroup.alpha = k;
+            _titleRect.localScale = Vector3.one * Mathf.Lerp(1.15f, 1f, eased);
+            yield return null;
+        }
+        _titleGroup.alpha = 1f;
+        _titleRect.localScale = Vector3.one;
+    }
+
+    // Unscaled time, so the fades still work with Time.timeScale at 0.
+    private static IEnumerator Fade(CanvasGroup group, float from, float to, float seconds)
+    {
+        for (float t = 0f; t < seconds; t += Time.unscaledDeltaTime)
+        {
+            group.alpha = Mathf.Lerp(from, to, t / seconds);
+            yield return null;
+        }
+        group.alpha = to;
+    }
+
+    // ------------------------------------------------------------ the three buttons
+
+    private void SetSelected(int index)
+    {
+        _selected = index;
+        for (int i = 0; i < ButtonCount; i++)
+        {
+            bool on = i == index;
+            _buttonImages[i].color = on ? selectedButtonColor : buttonColor;
+            _buttonLabels[i].color = on ? selectedTextColor : buttonTextColor;
+            _buttonRects[i].localScale = on ? Vector3.one * 1.06f : Vector3.one;
+        }
+    }
+
+    private void Activate(int index)
+    {
+        if (!_menuReady) return;
+        _menuReady = false;   // one choice only
+
+        if (index == 0)
+        {
+            StartCoroutine(RetryRoutine());
+        }
+        else if (index == 1)
+        {
+            if (!LeaveTo(levelSelectSceneName, "LevelSelect", "Level Select")) _menuReady = true;
+        }
+        else
+        {
+            if (!LeaveTo(mainMenuSceneName, "MainMenu", "Main Menu")) _menuReady = true;
+        }
+    }
+
+    // ------------------------------------------------------------ Retry
+
+    private IEnumerator RetryRoutine()
+    {
+        yield return Fade(_contentGroup, 1f, 0f, 0.25f);
+
+        // Behind the black screen: everyone back on their feet, back on their spot, the floor's foes started over.
+        ReviveTeam();
+        yield return null;   // one frame for whatever listens to the health change (animations, colliders) to catch up
+        PlaceTeam();
+
+        FloorManager manager = FindAnyObjectByType<FloorManager>();
+        if (manager != null) manager.RestartFloor();
+        else Debug.LogWarning("LightsOutScreen: there is no FloorManager in the scene, so the floor's foes were not started over.", this);
+
+        ThawTime();   // physics and the camera settle while it is still black; the foes stay frozen until the screen is clear
+        if (holdTime > 0f) yield return new WaitForSecondsRealtime(holdTime);
+
+        yield return Fade(_blackGroup, 1f, 0f, fadeOutTime);
+
+        _root.SetActive(false);
+        ReleaseWorld();
+    }
+
+    // Every player that counts gets back to full health. SetHealth also tells the health bars.
+    private void ReviveTeam()
+    {
+        CoopHealth[] all = CoopHealth.Players.ToArray();
+        for (int i = 0; i < all.Length; i++)
+        {
+            CoopHealth hp = all[i];
+            if (hp == null || !CoopRules.Counts(hp.PlayerNumber)) continue;
+            hp.SetHealth(hp.MaxHealth);
+        }
+    }
+
+    // Floor 1 (room 0): back to where each player spawned. Any other floor: THEIR OWN point from FloorController's Floors list.
+    private void PlaceTeam()
+    {
+        int floor = FloorController.CurrentFloor;
+        bool firstFloor = floor <= 1;
+
+        CoopHealth[] all = CoopHealth.Players.ToArray();
+        for (int i = 0; i < all.Length; i++)
+        {
+            CoopHealth hp = all[i];
+            if (hp == null) continue;
+
+            int n = hp.PlayerNumber;
+            Vector2 spot;
+            bool found = firstFloor
+                ? TryStartPosition(n, out spot) || TryFloorSpot(floor, n, out spot)
+                : TryFloorSpot(floor, n, out spot) || TryStartPosition(n, out spot);
+
+            if (!found)
+            {
+                if (!_warnedNoSpot)
+                {
+                    _warnedNoSpot = true;
+                    Debug.LogWarning("LightsOutScreen: no spawn spot found for Player " + n + " on floor " + floor +
+                                     " (nothing in FloorController's Floors list for them, and no start position was recorded), so they were not moved.", this);
+                }
+                continue;
+            }
+            MovePlayer(hp, spot);
+        }
+
+        Physics2D.SyncTransforms();
+    }
+
+    private bool TryStartPosition(int playerNumber, out Vector2 position)
+    {
+        if (playerNumber >= 1 && playerNumber <= MaxPlayers && _hasStart[playerNumber])
+        {
+            position = _startPositions[playerNumber];
+            return true;
+        }
+        position = Vector2.zero;
+        return false;
+    }
+
+    private bool TryFloorSpot(int floor, int playerNumber, out Vector2 position)
+    {
+        if (_floorController == null) _floorController = FindAnyObjectByType<FloorController>();
+        if (_floorController != null && _floorController.TryGetSpawnPoint(floor, playerNumber, out position)) return true;
+
+        position = Vector2.zero;
+        return false;
+    }
+
+    // Same move FloorController uses: the Rigidbody2D and the transform, with the speed zeroed.
+    private static void MovePlayer(CoopHealth player, Vector2 position)
+    {
+        Rigidbody2D body = player.GetComponent<Rigidbody2D>();
+        if (body == null) body = player.GetComponentInParent<Rigidbody2D>();
+
+        if (body != null)
+        {
+            body.position = position;
+            body.linearVelocity = Vector2.zero;
+        }
+        Transform t = player.transform;
+        t.position = new Vector3(position.x, position.y, t.position.z);
+    }
+
+    // ------------------------------------------------------------ Level Select and Menu
+
+    // Returns false (and shows the menu again) if no scene of that name can be loaded.
+    private bool LeaveTo(string wanted, string alternative1, string alternative2)
+    {
+        string scene = FindScene(wanted, alternative1, alternative2);
+        if (scene == null)
+        {
+            Debug.LogError("LightsOutScreen: the scene '" + wanted + "' can't be loaded. Check the scene name spelling and that the scene " +
+                           "is in the Scenes In Build list (File > Build Profiles).", this);
+            return false;
+        }
+        if (scene != wanted)
+        {
+            Debug.LogWarning("LightsOutScreen: '" + wanted + "' isn't in the build, so '" + scene + "' is used. Set the scene name to match.", this);
+        }
+
+        ReleaseWorld();           // time back to normal and foes un-frozen, so the next scene doesn't start frozen
+        GameReset.ResetRun();     // score back to 0 and player health back to full, same as the pause menu's Quit
+        SceneManager.LoadScene(scene);
+        return true;
+    }
+
+    private static string FindScene(string a, string b, string c)
+    {
+        string[] candidates = { a, b, c };
+        for (int i = 0; i < candidates.Length; i++)
+        {
+            if (!string.IsNullOrEmpty(candidates[i]) && Application.CanStreamedLevelBeLoaded(candidates[i])) return candidates[i];
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------ freezing and putting everything back
+
+    private void FreezeWorld()
+    {
+        FoeController.Frozen = true;   // foes, sword, trails and explosions all obey this
+        _foesFrozen = true;
+
+        if (freezeTime && !_timeFrozen)
+        {
+            _savedTimeScale = Time.timeScale > 0f ? Time.timeScale : 1f;
+            Time.timeScale = 0f;
+            _timeFrozen = true;
+        }
+    }
+
+    private void ThawTime()
+    {
+        if (!_timeFrozen) return;
+        _timeFrozen = false;
+        Time.timeScale = _savedTimeScale;
+    }
+
+    // Puts EVERYTHING back and ends the screen. Safe to call twice.
+    private void ReleaseWorld()
+    {
+        ThawTime();
+
+        if (_foesFrozen)
+        {
+            _foesFrozen = false;
+            FoeController.Frozen = false;
+        }
+
+        LockPlayers(false);
+        BlockPausing(false);
+        RestoreCursor();
+
+        _menuReady = false;
+        IsActive = false;
+        closedFrame = Time.frameCount;
+    }
+
+    private static void LockPlayers(bool locked)
+    {
+        for (int n = 1; n <= MaxPlayers; n++)
+        {
+            PlayerInputSource source = PlayerInputSource.Get(n);
+            if (source != null) source.Locked = locked;
+        }
+    }
+
+    // PauseManager (if the scene has one) must not open its menu over this screen. Pausing is put back as it was.
+    private void BlockPausing(bool block)
+    {
+        PauseManager pause = PauseManager.Instance;
+
+        if (block)
+        {
+            if (pause == null || _pauseChanged) return;
+            _pauseWasAllowed = pause.allowPausing;
+            pause.allowPausing = false;
+            _pauseChanged = true;
+        }
+        else if (_pauseChanged)
+        {
+            _pauseChanged = false;
+            if (pause != null) pause.allowPausing = _pauseWasAllowed;
+        }
+    }
+
+    private void SaveAndFreeCursor()
+    {
+        if (_cursorSaved) return;
+
+        _savedLock = Cursor.lockState;
+        _savedCursorVisible = Cursor.visible;
+        _cursorSaved = true;
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    private void RestoreCursor()
+    {
+        if (!_cursorSaved) return;
+        _cursorSaved = false;
+
+        Cursor.lockState = _savedLock;
+        Cursor.visible = _savedCursorVisible;
+    }
+
+    // ------------------------------------------------------------ building the screen
+
+    //  Canvas
+    //   LightsOutRoot
+    //     Black          fades to black first
+    //     Content        fades out on Retry
+    //       Title        the LIGHTS OUT banner
+    //       Menu         the three buttons and the hint
+    private void BuildUi()
+    {
+        var canvasObject = new GameObject("LightsOutCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        canvasObject.transform.SetParent(transform, false);
+
+        Canvas canvas = canvasObject.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = canvasSortingOrder;
+
+        CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.matchWidthOrHeight = 0.5f;
+
+        RectTransform root = NewRect("LightsOutRoot", canvasObject.transform);
+        Stretch(root);
+        _root = root.gameObject;
+
+        RectTransform black = NewRect("Black", root);
+        Stretch(black);
+        black.gameObject.AddComponent<Image>().color = Color.black;   // also swallows clicks meant for the game behind it
+        _blackGroup = black.gameObject.AddComponent<CanvasGroup>();
+
+        RectTransform content = NewRect("Content", root);
+        Stretch(content);
+        _contentGroup = content.gameObject.AddComponent<CanvasGroup>();
+
+        // The banner.
+        _titleRect = NewRect("Title", content);
+        Place(_titleRect, new Vector2(0f, 270f), new Vector2(1100f, 240f));
+        Image plate = _titleRect.gameObject.AddComponent<Image>();
+        plate.color = titlePlateColor;
+        plate.raycastTarget = false;
+        _titleGroup = _titleRect.gameObject.AddComponent<CanvasGroup>();
+
+        TextMeshProUGUI title = NewText("Text", _titleRect, titleText, 150f, Vector2.zero, Vector2.zero);
+        Stretch(title.rectTransform);
+        title.fontStyle = FontStyles.Bold;
+        title.color = titleTextColor;
+
+        // The three buttons.
+        RectTransform menu = NewRect("Menu", content);
+        Stretch(menu);
+        _menuGroup = menu.gameObject.AddComponent<CanvasGroup>();
+
+        string[] labels = { retryText, levelSelectText, menuText };
+        for (int i = 0; i < ButtonCount; i++)
+        {
+            RectTransform rect = NewRect("Button " + labels[i], menu);
+            Place(rect, new Vector2(0f, 50f - i * 130f), new Vector2(640f, 100f));
+
+            Image image = rect.gameObject.AddComponent<Image>();
+            TextMeshProUGUI label = NewText("Label", rect, labels[i], 52f, Vector2.zero, Vector2.zero);
+            Stretch(label.rectTransform);
+            label.fontStyle = FontStyles.Bold;
+
+            _buttonRects[i] = rect;
+            _buttonImages[i] = image;
+            _buttonLabels[i] = label;
+        }
+
+        TextMeshProUGUI hint = NewText("Hint", menu, hintText, 30f, new Vector2(0f, -350f), new Vector2(1400f, 50f));
+        hint.color = new Color(1f, 1f, 1f, 0.55f);
+
+        SetSelected(0);
+    }
+
+    private static RectTransform NewRect(string name, Transform parent)
+    {
+        var go = new GameObject(name, typeof(RectTransform));
+        var rect = (RectTransform)go.transform;
+        rect.SetParent(parent, false);
+        return rect;
+    }
+
+    private static void Stretch(RectTransform rect)
+    {
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+    }
+
+    // Anchored to the middle of its parent, offset by position.
+    private static void Place(RectTransform rect, Vector2 position, Vector2 size)
+    {
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+    }
+
+    private static TextMeshProUGUI NewText(string name, Transform parent, string text, float fontSize, Vector2 position, Vector2 size)
+    {
+        RectTransform rect = NewRect(name, parent);
+        Place(rect, position, size);
+
+        TextMeshProUGUI label = rect.gameObject.AddComponent<TextMeshProUGUI>();
+        label.text = text;
+        label.fontSize = fontSize;
+        label.alignment = TextAlignmentOptions.Center;
+        label.color = Color.white;
+        label.raycastTarget = false;
+        return label;
+    }
+}
