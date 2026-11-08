@@ -18,6 +18,7 @@ using Ilumisoft.HealthSystem;
 ///               out of the pool onto the tiles around it ("Glow Bleed", in tiles) but never onto or past a wall: it is cut off clean
 ///               at the wall's edge and does not wrap through it. It is drawn in front of the characters, so a player standing in
 ///               lava is lit by it. "Opacity" on Lava and Water and "Glow Opacity (all)" set how strong it is.
+///               Tick "Glow Always" on Lava and / or Water to stop the breathing: the glow then stays on at a steady strength.
 ///               By default it is drawn as a plain see-through overlay: nothing to set up, and it can't disturb your cameras.
 ///               OPTIONAL and experimental: tick "Shader Glow" to draw it with HazardGlow.shader instead, for a brighter ADDITIVE
 ///               light or a SOFT LIGHT that tints the art underneath (see "Glow Mode"). How that looks depends on your render pipeline
@@ -91,9 +92,12 @@ public class HazardTileFx : MonoBehaviour
         [Tooltip("Opacity of the glow for this kind of tile: 0 = invisible, 1 = as strong as it gets. 0.3 to 0.8 looks good.")]
         [FormerlySerializedAs("glowStrength")]
         [Range(0f, 1f)] public float glowOpacity = 0.6f;
-        [Tooltip("How much the whole glow breathes. 0 = steady, 1 = fades almost out and back.")]
+        [Tooltip("ON: the glow never breathes. It stays on at a steady strength (the Opacity above), with no fading in and out. " +
+                 "Glow Pulse and Glow Pulse Seconds are ignored while this is ticked. OFF: the glow breathes as set below.")]
+        public bool glowAlways = false;
+        [Tooltip("How much the whole glow breathes. 0 = steady, 1 = fades almost out and back. Ignored when Glow Always is ticked.")]
         [Range(0f, 1f)] public float glowPulse = 0.35f;
-        [Tooltip("Seconds for one slow breath of the glow.")]
+        [Tooltip("Seconds for one slow breath of the glow. Ignored when Glow Always is ticked.")]
         [Min(0.2f)] public float glowPulseSeconds = 3.5f;
 
         [Header("Particles")]
@@ -285,6 +289,7 @@ public class HazardTileFx : MonoBehaviour
         target.glowColour = source.glowColour;
         target.glowHighlight = source.glowHighlight;
         target.glowOpacity = source.glowOpacity;
+        target.glowAlways = source.glowAlways;
         target.glowPulse = source.glowPulse;
         target.glowPulseSeconds = source.glowPulseSeconds;
         target.fallbackColour = source.fallbackColour;
@@ -1339,11 +1344,14 @@ public class HazardTileFx : MonoBehaviour
             Look look = pool.kind == Lava ? lava : water;
             bool on = glowEnabled && look.enabled && look.glow && look.glowOpacity > 0f && glowOpacityAll > 0f;
 
+            // "Glow Always": nothing breathes. The whole glow sits at its full Opacity, the main layer at its peak and the
+            // highlight layer at a fixed middle value, so the light stays on and does not fade in and out.
+            bool steady = look.glowAlways;
             float speed = 6.2832f / look.glowPulseSeconds;
-            float envelope = 1f - look.glowPulse + look.glowPulse * (0.5f + 0.5f * Mathf.Sin(clock * speed + pool.phase));
+            float envelope = steady ? 1f : 1f - look.glowPulse + look.glowPulse * (0.5f + 0.5f * Mathf.Sin(clock * speed + pool.phase));
             float strength = look.glowOpacity * glowOpacityAll * envelope * plain;
-            float mainWave = 0.5f + 0.5f * Mathf.Sin(clock * speed * 1.3f + pool.phase * 2f);
-            float highlightWave = 0.5f + 0.5f * Mathf.Sin(clock * speed + pool.phase * 2f + 2.4f);
+            float mainWave = steady ? 1f : 0.5f + 0.5f * Mathf.Sin(clock * speed * 1.3f + pool.phase * 2f);
+            float highlightWave = steady ? 0.5f : 0.5f + 0.5f * Mathf.Sin(clock * speed + pool.phase * 2f + 2.4f);
 
             for (int g = 0; g < pool.glow.Count; g++)
             {

@@ -22620,6 +22620,7 @@ MonoBehaviour:
     glowColour: {r: 1, g: 0.42, b: 0.08, a: 1}
     glowHighlight: {r: 1, g: 0.78, b: 0.3, a: 1}
     glowOpacity: 1
+    glowAlways: 0
     glowPulse: 0.35
     glowPulseSeconds: 3.5
     ambientLevel: 3
@@ -22635,8 +22636,9 @@ MonoBehaviour:
     glow: 1
     glowColour: {r: 0.25, g: 0.65, b: 1, a: 1}
     glowHighlight: {r: 0.6, g: 0.92, b: 1, a: 1}
-    glowOpacity: 1
-    glowPulse: 1
+    glowOpacity: 0.654
+    glowAlways: 1
+    glowPulse: 0.674
     glowPulseSeconds: 3.5
     ambientLevel: 3
     walkingLevel: 3
