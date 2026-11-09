@@ -24,6 +24,13 @@ using Cainos.PixelArtTopDown_Basic;
 ///      - Wall ahead + both sides open  -> pick left or right at random (a junction).
 ///      - Wall ahead + both sides shut  -> turn around (a dead end).
 ///
+/// Which player to chase (Target Closest Player, ON by default): with two players in the game, each foe hunts whichever one is
+/// NEAREST to it, re-checked a few times a second. A foe sticks with its player until the other one is clearly closer (Switch
+/// Margin Tiles), so it doesn't flip-flop when both players are about the same distance away. A player who is down (0 HP),
+/// switched off, or who doesn't count under CoopRules (single player mode) is never chosen, and when nobody is on their feet the
+/// foes wander. A foe also hurts ANY player it is touching, not only the one it is chasing. Turn the toggle off for the old
+/// behaviour: one fixed player (the one the spawner hands over, or the object tagged 'Player').
+///
 /// Suggested starting values (tune by feel):
 ///                 speedMultiplier   contactDamage   scoreValue   HP (on the HealthComponent)
 ///      Walker          0.5               10            100            50
@@ -125,6 +132,15 @@ public class FoeController : MonoBehaviour
     [Header("Target")]
     [Tooltip("Leave EMPTY. The spawner (or the 'Player' tag) supplies the live player. A prefab can't hold a scene object, so anything dragged here from the Project window is ignored.")]
     [SerializeField] private Transform target;
+    [Tooltip("ON (default): this foe hunts the NEAREST player that is still on their feet, and switches when the other player becomes clearly closer. " +
+             "OFF: the old behaviour, one fixed player (the one the spawner hands over, or the object tagged 'Player').")]
+    [SerializeField] private bool targetClosestPlayer = true;
+    [Tooltip("How often (seconds) the foe checks which player is closest. Each foe uses a slightly different moment. A target that goes down or is switched off is replaced at once, whatever this says.")]
+    [SerializeField] private float retargetInterval = 0.25f;
+    [Tooltip("The foe only drops the player it is chasing for the other one when the other is at least this many TILES closer. Stops a foe flip-flopping when both " +
+             "players are about the same distance away. 0 = switch the moment the other player is even slightly closer.")]
+    [Min(0f)]
+    [SerializeField] private float switchMarginTiles = 1.5f;
 
     [Header("Chasing")]
     [Tooltip("ON (default): foes always hunt the player from any distance, whether the player is moving or standing still. The Chase Range below is ignored. OFF: foes only chase inside the Chase Range and wander otherwise.")]
@@ -228,6 +244,7 @@ public class FoeController : MonoBehaviour
 
     private HealthComponent targetHealth;
     private TopDownCharacterController playerController;
+    private float retargetTimer;        // counts down to the next "who is closest?" check (0 = check on the next physics step)
 
     private ContactFilter2D wallFilter;
     private readonly RaycastHit2D[] hits = new RaycastHit2D[8];
@@ -370,11 +387,13 @@ public class FoeController : MonoBehaviour
         idleExpired = false;
     }
 
-    /// <summary>Called by FoeSpawner right after Instantiate so the foe doesn't have to search for the player.</summary>
+    /// <summary>Called by FoeSpawner right after Instantiate so the foe doesn't have to search for the player.
+    /// With Target Closest Player on, this is only the STARTING target: the foe re-picks the nearest player on its first physics step.</summary>
     public void SetTarget(Transform newTarget)
     {
         target = newTarget;
         CacheTarget();
+        retargetTimer = 0f;
     }
 
     /// <summary>
@@ -475,6 +494,176 @@ public class FoeController : MonoBehaviour
         return true;
     }
 
+    // ------------------------------------------------------------ choosing the closest player
+
+    // One entry per player who is in the game and counts. The list is built once per frame and shared by every foe,
+    // so thirty foes cost about the same as one.
+    private class PlayerInfo
+    {
+        public Transform transform;
+        public HealthComponent health;   // null if the player has no Health component
+        public int number;
+
+        // The same test the chase uses: a player at 0 HP (downed or dead) is not worth hunting.
+        public bool OnTheirFeet { get { return health == null || health.CurrentHealth > 0f; } }
+    }
+
+    private static readonly List<PlayerInfo> roster = new List<PlayerInfo>(PlayerInputSource.MaxPlayers);
+    private static readonly Dictionary<Transform, PlayerInfo> playerInfos = new Dictionary<Transform, PlayerInfo>();
+    private static int rosterFrame = -1;
+    private static Transform fallbackPlayer;   // the object tagged "Player", used only when there is no PlayerInputSource anywhere
+    private static float nextFallbackSearch;
+
+    // Static values survive between Play sessions when "Reload Domain" is switched off, so they are reset by hand.
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetPlayerRoster()
+    {
+        roster.Clear();
+        playerInfos.Clear();
+        rosterFrame = -1;
+        fallbackPlayer = null;
+        nextFallbackSearch = 0f;
+    }
+
+    // Every player who is in the game right now and counts. PlayerInputSource.Get only returns players that are switched on,
+    // and CoopRules.Counts is false for a player who is ignored (the other player in single player mode).
+    private static List<PlayerInfo> Roster()
+    {
+        if (rosterFrame == Time.frameCount) return roster;
+        rosterFrame = Time.frameCount;
+        roster.Clear();
+
+        bool anySource = false;
+        for (int n = 1; n <= PlayerInputSource.MaxPlayers; n++)
+        {
+            PlayerInputSource source = PlayerInputSource.Get(n);
+            if (source == null) continue;
+
+            anySource = true;
+            if (!CoopRules.Counts(n)) continue;
+            AddToRoster(source.transform, n);
+        }
+        if (anySource) return roster;
+
+        // No PlayerInputSource anywhere (a test scene with no co-op set-up yet): fall back to the object tagged "Player", as before.
+        if ((fallbackPlayer == null || !fallbackPlayer.gameObject.activeInHierarchy) && Time.time >= nextFallbackSearch)
+        {
+            nextFallbackSearch = Time.time + 0.5f;
+            GameObject found = GameObject.FindWithTag("Player");
+            fallbackPlayer = found != null ? found.transform : null;
+        }
+        if (fallbackPlayer != null && fallbackPlayer.gameObject.activeInHierarchy) AddToRoster(fallbackPlayer, 1);
+        return roster;
+    }
+
+    private static void AddToRoster(Transform t, int number)
+    {
+        if (t == null) return;
+
+        if (!playerInfos.TryGetValue(t, out PlayerInfo info))
+        {
+            if (playerInfos.Count > 16) playerInfos.Clear();   // a respawned player is a new object: don't let old ones pile up
+            info = new PlayerInfo { transform = t };
+            playerInfos[t] = info;
+        }
+
+        info.number = number;
+        if (info.health == null)
+        {
+            info.health = t.GetComponentInParent<HealthComponent>();
+            if (info.health == null) info.health = t.GetComponentInChildren<HealthComponent>();   // Health on a child object
+        }
+        roster.Add(info);
+    }
+
+    // Picks who this foe hunts. Returns false when there is nobody to hunt (the foe then wanders).
+    //   - A target that is gone, switched off or down is replaced at once. Otherwise the foe looks every 'retargetInterval' seconds.
+    //   - It goes for the nearest player on their feet, but only drops the player it has for the other one when the other is
+    //     'switchMarginTiles' closer, so two players at the same distance don't make it flip-flop.
+    //   - When everybody is down it keeps its eye on the nearest one and wanders (FixedUpdate sees that player has 0 HP).
+    private bool ChooseTarget()
+    {
+        if (!targetClosestPlayer) return EnsureTarget();
+
+        retargetTimer -= Time.fixedDeltaTime;
+        bool mustChoose = target == null || !target.gameObject.activeInHierarchy ||
+                          (targetHealth != null && targetHealth.CurrentHealth <= 0f);
+        if (!mustChoose && retargetTimer > 0f) return true;
+        retargetTimer = retargetInterval * Random.Range(0.8f, 1.2f);
+
+        List<PlayerInfo> players = Roster();
+        if (players.Count == 0) return EnsureTarget();   // no players known yet: the old search by tag
+
+        Vector2 here = rb.position;
+        PlayerInfo nearestStanding = null;
+        PlayerInfo nearestAny = null;
+        PlayerInfo current = null;
+        float standingSqr = float.MaxValue;
+        float anySqr = float.MaxValue;
+        float currentSqr = float.MaxValue;
+
+        for (int i = 0; i < players.Count; i++)
+        {
+            PlayerInfo p = players[i];
+            float sqr = ((Vector2)p.transform.position - here).sqrMagnitude;
+
+            if (p.transform == target)
+            {
+                current = p;
+                currentSqr = sqr;
+            }
+            if (sqr < anySqr)
+            {
+                nearestAny = p;
+                anySqr = sqr;
+            }
+            if (p.OnTheirFeet && sqr < standingSqr)
+            {
+                nearestStanding = p;
+                standingSqr = sqr;
+            }
+        }
+
+        if (nearestStanding == null)
+        {
+            SwitchTarget(nearestAny.transform);
+            return true;
+        }
+
+        bool keepCurrent = current != null && current.OnTheirFeet && current != nearestStanding &&
+                           Mathf.Sqrt(standingSqr) + switchMarginTiles * TileSize >= Mathf.Sqrt(currentSqr);
+        SwitchTarget(keepCurrent ? current.transform : nearestStanding.transform);
+        return true;
+    }
+
+    private void SwitchTarget(Transform newTarget)
+    {
+        if (newTarget == target) return;
+
+        target = newTarget;
+        CacheTarget();   // that player's health and walking speed
+
+        // The route and the straight-line test were made for the old player: plan again on this very step.
+        repathTimer = 0f;
+        path.Clear();
+        pathIndex = 0;
+        chaseMode = ChaseMode.Direct;
+        stuckTimer = 0f;
+        stuckAnchor = Center;
+    }
+
+    // The health of the player this collider belongs to (the collider itself, or one of its children), or null if it is not a player.
+    private static HealthComponent HealthOfPlayerTouched(Transform other)
+    {
+        List<PlayerInfo> players = Roster();
+        for (int i = 0; i < players.Count; i++)
+        {
+            PlayerInfo p = players[i];
+            if (p.health != null && (other == p.transform || other.IsChildOf(p.transform))) return p.health;
+        }
+        return null;
+    }
+
     // True if a wall sits between the foe and the player (the foe's own and the player's colliders are ignored).
     private bool LineBlocked()
     {
@@ -567,7 +756,7 @@ public class FoeController : MonoBehaviour
             return;
         }
 
-        bool hasTarget = EnsureTarget();
+        bool hasTarget = ChooseTarget();
         bool playerAlive = targetHealth == null || targetHealth.CurrentHealth > 0f;
         bool chasing = hasTarget && playerAlive && PlayerInRange();
 
@@ -1141,16 +1330,24 @@ public class FoeController : MonoBehaviour
 
     // ------------------------------------------------------------ combat
 
-    // Hurts the player while touching them, at most once per attackCooldown.
+    // Hurts a player while touching them, at most once per attackCooldown. With Target Closest Player on, ANY player counts, not
+    // only the one being chased: a foe can end up pressed against the player it is not hunting while it shoves its way past.
     private void OnCollisionStay2D(Collision2D collision)
     {
-        if (dead || IsPaused || IsFrozen || targetHealth == null) return;
+        if (dead || IsPaused || IsFrozen) return;
         if (Time.time < nextAttackTime) return;
-        if (targetHealth.CurrentHealth <= 0f) return;
-        Transform other = collision.collider.transform;
-        if (target == null || (other != target && !other.IsChildOf(target))) return;   // only hurt the player
 
-        DealDamage(targetHealth, contactDamage * damageScale.Get(CurrentDifficulty) * damageRoll);
+        Transform other = collision.collider.transform;
+        HealthComponent victim = null;
+
+        if (target != null && targetHealth != null && (other == target || other.IsChildOf(target)))
+            victim = targetHealth;
+        else if (targetClosestPlayer)
+            victim = HealthOfPlayerTouched(other);
+
+        if (victim == null || victim.CurrentHealth <= 0f) return;   // not a player, or already down
+
+        DealDamage(victim, contactDamage * damageScale.Get(CurrentDifficulty) * damageRoll);
         nextAttackTime = Time.time + attackCooldown;
     }
 
@@ -1440,12 +1637,18 @@ public class FoeController : MonoBehaviour
 
     // ------------------------------------------------------------ editor helper
 
-    // Select a foe in the Scene view to see its chase range as a red circle, and (while playing) the route it is
-    // following as a cyan line.
+    // Select a foe in the Scene view to see its chase range as a red circle, who it is hunting right now as a yellow line
+    // (while playing), and the route it is following as a cyan line.
     private void OnDrawGizmosSelected()
     {
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, chaseRangePixels / pixelsPerUnit);
+
+        if (Application.isPlaying && target != null)
+        {
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawLine(transform.position, target.position);
+        }
 
         if (chaseMode == ChaseMode.Path && path.Count > 0)
         {
