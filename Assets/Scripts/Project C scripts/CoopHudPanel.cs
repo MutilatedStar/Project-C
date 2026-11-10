@@ -3,7 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>Which family of HUD a panel belongs to. Each family is placed by its own layout component.</summary>
-public enum HudGroup { Health, Inventory }
+public enum HudGroup { Health, Inventory, Score }
 
 /// <summary>
 /// The base of every per-player HUD piece (the health bars and the inventory bars). A panel belongs to one player,

@@ -233,6 +233,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1314684542}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1314684546}
   m_SourcePrefab: {fileID: 100100000, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
 --- !u!4 &29989951 stripped
 Transform:
@@ -751,6 +754,101 @@ SpriteRenderer:
   m_CorrespondingSourceObject: {fileID: 5628018141983903107, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
   m_PrefabInstance: {fileID: 1039362041}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &155863149
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 155863150}
+  - component: {fileID: 155863152}
+  - component: {fileID: 155863151}
+  m_Layer: 0
+  m_Name: CoopDowned
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &155863150
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 155863149}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -122.89316, y: -23.102749, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1039362043}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &155863151
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 155863149}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a255736f5c5fb4e46b87c4dab6277df2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CoopDowned
+  sprite: {fileID: 0}
+  fallAngle: 90
+  fallTime: 0.25
+  downedColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+  grayStrength: 0.9
+  reviveRadius: 1
+  reviveSeconds: 2.5
+  tapBonusSeconds: 0.3
+  progressDrain: 0.5
+  reviveHealthPercent: 0.5
+  graceSeconds: 1.5
+  blowUpDelay: 0.75
+  canGiveUpWhilePartnerAlive: 0
+  respawnDelay: 1.5
+  respawnHealthPercent: 1
+  resetScoreOnBlowUp: 1
+  snapCameraOnRespawn: 1
+  respawnReplacesTeamWipe: 1
+  roomEntryDelay: 0.25
+  pieceColumns: 4
+  pieceRows: 4
+  burstSpeed: 4.5
+  burstSpin: 540
+  burstDrag: 3
+  pieceLife: 1.1
+  blowUpEffect: {fileID: 0}
+  effectLife: 3
+  blowUpClip: {fileID: 0}
+  reviveClip: {fileID: 0}
+  soundVolume: 0.8
+  showReviveBar: 1
+  barOffset: {x: 0, y: 1.1}
+  barWidth: 1.2
+  barHeight: 0.16
+  barBackColor: {r: 0.08, g: 0.08, b: 0.1, a: 0.85}
+  barFillColor: {r: 0.35, g: 0.9, b: 0.4, a: 1}
+--- !u!114 &155863152
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 155863149}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4822dbcbc1142174e880114d6eb3ae03, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Ilumisoft.HealthSystem.CoopHealth
+  maxHealth: 100
+  initialRatio: 1
 --- !u!1 &192588576
 GameObject:
   m_ObjectHideFlags: 0
@@ -51580,6 +51678,9 @@ PrefabInstance:
     m_RemovedGameObjects: []
     m_AddedGameObjects:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: 0
+      addedObject: {fileID: 155863150}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1540528868}
     - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
@@ -51613,6 +51714,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1039362057}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1039362060}
   m_SourcePrefab: {fileID: 100100000, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
 --- !u!1 &1039362042 stripped
 GameObject:
@@ -51640,9 +51744,11 @@ MonoBehaviour:
   sprintMultiplier: 1.5
   sprintToggle: 1
   analogMovement: 1
-  footstepSource: {fileID: 0}
-  stepClips: []
-  walkStepInterval: 0.45
+  footstepSource: {fileID: 1582288550}
+  stepClips:
+  - {fileID: 8300000, guid: 5427b6de0e7f04043a5cc81f83af251e, type: 3}
+  - {fileID: 8300000, guid: a973be3b20619d1428272cf692b47bc8, type: 3}
+  walkStepInterval: 0.2
   sprintStepInterval: 0.3
   walkPitchVariation: 0.04
   sprintPitchVariation: 0.07
@@ -52027,8 +52133,8 @@ MonoBehaviour:
   foeMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  sfxSource: {fileID: 0}
-  critClip: {fileID: 0}
+  sfxSource: {fileID: 1582288550}
+  critClip: {fileID: 8300000, guid: 3554a15f2eccf2b4597fb4305eff49b3, type: 3}
   debugLog: 0
   debugUnlockAllSwords: 0
 --- !u!58 &1039362048
@@ -52154,6 +52260,54 @@ MonoBehaviour:
   scanRadius: 1.25
   blockedLandingSeconds: 1
   logKeysAtStart: 1
+--- !u!114 &1039362060
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1039362042}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a255736f5c5fb4e46b87c4dab6277df2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CoopDowned
+  sprite: {fileID: 0}
+  fallAngle: 90
+  fallTime: 0.25
+  downedColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+  grayStrength: 0.9
+  reviveRadius: 1
+  reviveSeconds: 2.5
+  tapBonusSeconds: 0.3
+  progressDrain: 0.5
+  reviveHealthPercent: 0.5
+  graceSeconds: 1.5
+  blowUpDelay: 0.75
+  canGiveUpWhilePartnerAlive: 0
+  respawnDelay: 1.5
+  respawnHealthPercent: 1
+  resetScoreOnBlowUp: 1
+  snapCameraOnRespawn: 1
+  respawnReplacesTeamWipe: 1
+  roomEntryDelay: 0.25
+  pieceColumns: 4
+  pieceRows: 4
+  burstSpeed: 4.5
+  burstSpin: 540
+  burstDrag: 3
+  pieceLife: 1.1
+  blowUpEffect: {fileID: 0}
+  effectLife: 3
+  blowUpClip: {fileID: 8300000, guid: f965e8eaf33064e489736233bec56fb6, type: 3}
+  reviveClip: {fileID: 8300000, guid: 7bb166aa1718b9e4f8bdf0bb720e6774, type: 3}
+  soundVolume: 0.3
+  showReviveBar: 1
+  barOffset: {x: 0, y: 1.1}
+  barWidth: 1.2
+  barHeight: 0.16
+  barBackColor: {r: 0.08, g: 0.08, b: 0.1, a: 0.85}
+  barFillColor: {r: 0.35, g: 0.9, b: 0.4, a: 1}
 --- !u!1 &1042535565
 GameObject:
   m_ObjectHideFlags: 0
@@ -54141,8 +54295,8 @@ MonoBehaviour:
   foeMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  sfxSource: {fileID: 0}
-  critClip: {fileID: 0}
+  sfxSource: {fileID: 1582288550}
+  critClip: {fileID: 8300000, guid: 3554a15f2eccf2b4597fb4305eff49b3, type: 3}
   debugLog: 0
   debugUnlockAllSwords: 0
 --- !u!58 &1314684527
@@ -54280,8 +54434,10 @@ MonoBehaviour:
   sprintMultiplier: 1.5
   sprintToggle: 1
   analogMovement: 1
-  footstepSource: {fileID: 0}
-  stepClips: []
+  footstepSource: {fileID: 1582288550}
+  stepClips:
+  - {fileID: 8300000, guid: a973be3b20619d1428272cf692b47bc8, type: 3}
+  - {fileID: 8300000, guid: 5427b6de0e7f04043a5cc81f83af251e, type: 3}
   walkStepInterval: 0.45
   sprintStepInterval: 0.3
   walkPitchVariation: 0.04
@@ -54374,6 +54530,54 @@ MonoBehaviour:
   scanRadius: 1.25
   blockedLandingSeconds: 1
   logKeysAtStart: 1
+--- !u!114 &1314684546
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1314684519}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a255736f5c5fb4e46b87c4dab6277df2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CoopDowned
+  sprite: {fileID: 0}
+  fallAngle: 90
+  fallTime: 0.25
+  downedColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+  grayStrength: 0.9
+  reviveRadius: 1
+  reviveSeconds: 2.5
+  tapBonusSeconds: 0.3
+  progressDrain: 0.5
+  reviveHealthPercent: 0.5
+  graceSeconds: 1.5
+  blowUpDelay: 0.75
+  canGiveUpWhilePartnerAlive: 0
+  respawnDelay: 1.5
+  respawnHealthPercent: 1
+  resetScoreOnBlowUp: 1
+  snapCameraOnRespawn: 1
+  respawnReplacesTeamWipe: 1
+  roomEntryDelay: 0.25
+  pieceColumns: 4
+  pieceRows: 4
+  burstSpeed: 4.5
+  burstSpin: 540
+  burstDrag: 3
+  pieceLife: 1.1
+  blowUpEffect: {fileID: 0}
+  effectLife: 3
+  blowUpClip: {fileID: 8300000, guid: f965e8eaf33064e489736233bec56fb6, type: 3}
+  reviveClip: {fileID: 8300000, guid: 7bb166aa1718b9e4f8bdf0bb720e6774, type: 3}
+  soundVolume: 0.33
+  showReviveBar: 1
+  barOffset: {x: 0, y: 1.1}
+  barWidth: 1.2
+  barHeight: 0.16
+  barBackColor: {r: 0.08, g: 0.08, b: 0.1, a: 0.85}
+  barFillColor: {r: 0.35, g: 0.9, b: 0.4, a: 1}
 --- !u!1 &1356870079
 GameObject:
   m_ObjectHideFlags: 0
@@ -56563,6 +56767,135 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1079388821}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1582288549
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1582288551}
+  - component: {fileID: 1582288550}
+  m_Layer: 0
+  m_Name: Audio Source
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!82 &1582288550
+AudioSource:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1582288549}
+  m_Enabled: 1
+  serializedVersion: 4
+  OutputAudioMixerGroup: {fileID: -7128067719386893152, guid: 204ae77320b536d459d12c2126255a73, type: 2}
+  m_audioClip: {fileID: 0}
+  m_Resource: {fileID: 0}
+  m_PlayOnAwake: 1
+  m_Volume: 1
+  m_Pitch: 1
+  Loop: 0
+  Mute: 0
+  Spatialize: 0
+  SpatializePostEffects: 0
+  Priority: 128
+  DopplerLevel: 1
+  MinDistance: 1
+  MaxDistance: 500
+  Pan2D: 0
+  rolloffMode: 0
+  BypassEffects: 0
+  BypassListenerEffects: 0
+  BypassReverbZones: 0
+  rolloffCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  panLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  spreadCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reverbZoneMixCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+--- !u!4 &1582288551
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1582288549}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -174.53026, y: -20.78218, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1605951311
 GameObject:
   m_ObjectHideFlags: 0
@@ -57338,11 +57671,9 @@ MonoBehaviour:
   distanceJitterTiles: 1
   clearRadiusTiles: 0.4
   blockedMask:
-    serializedVersion: 2
     m_Bits: 4294967295
   floorTilemaps: []
   floorMask:
-    serializedVersion: 2
     m_Bits: 0
   wallTilemaps: []
   requireClearLine: 1
@@ -57356,7 +57687,7 @@ MonoBehaviour:
     hard: 0.9
   foeParent: {fileID: 0}
   idleDespawnSeconds: 120
-  idleDespawnExemptFloors: 010000000400000005000000i
+  idleDespawnExemptFloors: 010000000400000005000000
 --- !u!114 &1783181721
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -284863,3 +285194,4 @@ SceneRoots:
   - {fileID: 583790711}
   - {fileID: 1469939629}
   - {fileID: 1619411944}
+  - {fileID: 1582288551}
