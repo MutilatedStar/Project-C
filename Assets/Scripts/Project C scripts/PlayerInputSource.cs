@@ -480,6 +480,25 @@ public class PlayerInputSource : MonoBehaviour
     public bool AttackPressed { get { return Pressed(PlayerAction.Attack); } }
     public bool AttackHeld { get { return Held(PlayerAction.Attack); } }
 
+    /// <summary>
+    /// Attack, read even while this player is Locked. Everything else stays dead while Locked is on; this is the one button a knocked-down
+    /// player still needs (CoopDowned uses it for "blow up"). Still respects the keyboard / controller switches, Player 2 not being in the
+    /// game yet, and typing in a text box.
+    /// </summary>
+    public bool AttackPressedEvenIfLocked
+    {
+        get
+        {
+            if (!(playerNumber == 1 || TwoPlayers)) return false;
+            if (useKeyboard && !Typing && KeysPressed(Table[(int)PlayerAction.Attack])) return true;
+#if ENABLE_INPUT_SYSTEM
+            ButtonControl control = ControllerSlots.Control(Pad, PadButtonFor(PlayerAction.Attack));
+            if (control != null && control.wasPressedThisFrame) return true;
+#endif
+            return false;
+        }
+    }
+
     public bool InteractPressed { get { return Pressed(PlayerAction.Interact); } }
     /// <summary>True while Swap is held (hold next to a downed partner to revive).</summary>
     public bool InteractHeld { get { return Held(PlayerAction.Interact); } }

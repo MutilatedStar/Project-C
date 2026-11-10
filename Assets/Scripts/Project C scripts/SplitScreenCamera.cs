@@ -126,6 +126,15 @@ public class SplitScreenCamera : MonoBehaviour
     /// <summary>The split screen in the scene (found by CoopHealthbarLayout), or null.</summary>
     public static SplitScreenCamera Current { get; private set; }
 
+    /// <summary>
+    /// Put both cameras straight onto their players on the next frame, with no glide. CoopDowned calls it when a player respawns at
+    /// a spawn point that may be far from where they fell. Does nothing else: the split / merge layout still slides as usual.
+    /// </summary>
+    public void SnapToPlayers()
+    {
+        snapNextFrame = true;
+    }
+
     /// <summary>How the screen is divided at this moment, with the slide animation included.</summary>
     public SplitViews CurrentViews()
     {
@@ -577,7 +586,10 @@ public class SplitScreenCamera : MonoBehaviour
             t = health.transform;
         }
 
-        if (health != null && !health.IsAlive) return null;   // lost all their health
+        // Lost all their health: the camera lets go, EXCEPT while CoopDowned is looking after them (knocked down, blown up, waiting to
+        // respawn). It keeps following them, so each player's half of the screen never goes blind and the view is already there
+        // the moment they are revived or respawn.
+        if (health != null && !health.IsAlive && !health.KeepCameraOn) return null;
 
         // Explicit Single Player Mode remains authoritative, including when its chosen target is not Player 1.
         if (CoopRules.SinglePlayerMode && number != CoopRules.TrackedPlayer) return null;

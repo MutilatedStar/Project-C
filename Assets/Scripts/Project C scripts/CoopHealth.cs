@@ -14,6 +14,7 @@ namespace Ilumisoft.HealthSystem
     ///   CoopRules.SinglePlayerMode  a player who doesn't count takes no damage at all
     ///   Invincible                  while true this player takes no damage at all (PlayerEffects sets it for the
     ///                               invincibility power-up). A hit that is blocked is not passed on to the other player either.
+    ///   Grace                       the same, owned by CoopDowned: a short safe moment after a revive or a respawn.
     ///   Airborne                    the same, but owned by the jump: TopDownJump sets it in the air and clears it on landing. It is a
     ///                               separate flag so landing can never switch the invincibility power-up off.
     ///
@@ -46,6 +47,25 @@ namespace Ilumisoft.HealthSystem
         /// <summary>While true, damage does nothing (healing still works). Set by TopDownJump while the player is in the air: no hurt box up there.</summary>
         public bool Airborne { get; set; }
 
+        /// <summary>
+        /// While true, damage does nothing (healing still works). Set by CoopDowned for a short moment after a revive or a respawn,
+        /// so the player is not knocked straight back down by whatever hit them. A separate flag, so it can never switch the
+        /// invincibility power-up (Invincible) or the jump (Airborne) off.
+        /// </summary>
+        public bool Grace { get; set; }
+
+        /// <summary>
+        /// While true, SplitScreenCamera keeps following this player even though their health is 0 (CoopDowned sets it from the moment
+        /// they are knocked down until they are back on their feet), so the camera never loses them.
+        /// </summary>
+        public bool KeepCameraOn { get; set; }
+
+        /// <summary>
+        /// Raise this while something (CoopDowned) will bring a player back, so "everyone is at 0 health" is not the end of the game.
+        /// While it is above 0, AllCountedDead stays false and TeamWiped is not raised.
+        /// </summary>
+        public static int TeamWipeBlockers;
+
         public int PlayerNumber
         {
             get
@@ -68,7 +88,7 @@ namespace Ilumisoft.HealthSystem
 
             // Single player mode: the player who doesn't count can't be hurt. Neither can an invincible or a jumping one.
             if (!CoopRules.Counts(PlayerNumber)) return;
-            if (Invincible || Airborne) return;
+            if (Invincible || Airborne || Grace) return;
 
             base.ApplyDamage(damage);
 
@@ -108,11 +128,16 @@ namespace Ilumisoft.HealthSystem
             if (AllCountedDead && TeamWiped != null) TeamWiped();
         }
 
-        /// <summary>True once every player that counts is dead (and there is at least one).</summary>
+        /// <summary>
+        /// True once every player that counts is dead (and there is at least one). Always false while TeamWipeBlockers is above 0
+        /// (CoopDowned holds it up while knocked-down players can still be revived or respawn), so TeamWiped is not raised either.
+        /// </summary>
         public static bool AllCountedDead
         {
             get
             {
+                if (TeamWipeBlockers > 0) return false;
+
                 bool any = false;
                 for (int i = 0; i < Players.Count; i++)
                 {
@@ -165,6 +190,7 @@ namespace Ilumisoft.HealthSystem
         {
             Players.Clear();
             TeamWiped = null;
+            TeamWipeBlockers = 0;
             _mirroring = false;
         }
     }
