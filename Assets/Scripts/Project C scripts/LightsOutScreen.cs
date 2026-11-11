@@ -177,6 +177,10 @@ public class LightsOutScreen : MonoBehaviour
     private FloorController _floorController;
     private bool _warnedNoSpot;
     private AudioSource _audio;       // plays the Lights Out clip (2D, keeps playing while time is frozen)
+    private float _wipeSeenSince = -1f;   // when every player was first seen at 0 health without the screen starting (PollTeamWipe)
+
+    private const float PollWaitSeconds = 0.4f;       // how long "everybody is at 0 health" must last before the safety net starts the screen
+    private const float MaxFloorChangeWait = 3f;      // the longest the screen waits for a running floor change
 
     // ------------------------------------------------------------ lifecycle
 
@@ -210,10 +214,38 @@ public class LightsOutScreen : MonoBehaviour
     {
         if (IsActive) return;
 
+        if (_root == null)
+        {
+            Debug.LogError("LightsOutScreen: the team is wiped but the screen's UI was never built (check the Console for an error from Awake, " +
+                           "usually TextMeshPro's essential resources not being imported).", this);
+            return;
+        }
+
         IsActive = true;       // from this moment the players hold still and the doors and hazards do nothing
+        _wipeSeenSince = -1f;
+        Debug.Log("LightsOutScreen: every player is down, so the game-over screen is starting.", this);
+
         LockPlayers(true);
         if (lightsOutClip != null) StartCoroutine(PlayLightsOutSound());
         StartCoroutine(ShowRoutine());
+    }
+
+    // Safety net that does not depend on any event or on any player's script: if every player that counts has been at 0 health for a
+    // moment and the screen has not started, start it. (The normal way in is CoopHealth.TeamWiped, which fires the instant the last
+    // player's health reaches 0.) The short wait stops a one-frame glitch, such as a scene loading, from showing the screen.
+    private void PollTeamWipe()
+    {
+        if (!CoopHealth.AllCountedDead || closedFrame == Time.frameCount)
+        {
+            _wipeSeenSince = -1f;
+            return;
+        }
+
+        if (_wipeSeenSince < 0f) _wipeSeenSince = Time.unscaledTime;
+        if (Time.unscaledTime - _wipeSeenSince < PollWaitSeconds) return;
+
+        Debug.LogWarning("LightsOutScreen: every player is at 0 health but TeamWiped was never raised, so the screen was started from here instead.", this);
+        HandleTeamWiped();
     }
 
     // ------------------------------------------------------------ sound
@@ -247,6 +279,7 @@ public class LightsOutScreen : MonoBehaviour
         if (!IsActive)
         {
             RecordStartPositions();
+            PollTeamWipe();
             return;
         }
         if (!_menuReady) return;
@@ -413,8 +446,18 @@ public class LightsOutScreen : MonoBehaviour
 
     private IEnumerator ShowRoutine()
     {
-        // A floor change that is mid-way finishes first (a hit can land just as the doors close).
-        while (FloorController.IsChangingFloor) yield return null;
+        // A floor change that is mid-way finishes first (a hit can land just as the doors close). Never for more than a few seconds,
+        // so a floor change that gets stuck can't keep the game-over screen away for ever.
+        float waitedForFloor = 0f;
+        while (FloorController.IsChangingFloor && waitedForFloor < MaxFloorChangeWait)
+        {
+            waitedForFloor += Time.unscaledDeltaTime;
+            yield return null;
+        }
+        if (FloorController.IsChangingFloor)
+        {
+            Debug.LogWarning("LightsOutScreen: a floor change was still running after " + MaxFloorChangeWait + " seconds, so the screen is shown anyway.", this);
+        }
 
         // Let the last player's fall be seen before it goes dark.
         if (delayBeforeFade > 0f) yield return new WaitForSecondsRealtime(delayBeforeFade);

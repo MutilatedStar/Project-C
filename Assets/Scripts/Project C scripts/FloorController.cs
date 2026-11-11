@@ -236,6 +236,7 @@ public class FloorController : MonoBehaviour
         if (MenuController.IsOpen) return;
         if (LightsOutScreen.IsActive) return;   // the team is wiped: nothing under the downed players counts
 
+        updatesRun++;
         CheckDoors();
         if (IsChangingFloor) return;   // a door just fired
 
@@ -486,6 +487,8 @@ public class FloorController : MonoBehaviour
 
         bool down = FloorDoor.CheckGroup(row.doors, FloorDoor.DoorAction.NextFloor);
         bool shop = FloorDoor.CheckGroup(row.doors, FloorDoor.DoorAction.Shop);
+        lastDown = down;
+        lastShop = shop;
 
         if (!down && !shop)
         {
@@ -507,6 +510,42 @@ public class FloorController : MonoBehaviour
 
     // ---- "somebody is on a door and nothing happens": say why, once in a while.
     // Only with Log Tile Under Player on (the Console debug switch of this script). It is just a Console line: nothing changes in the game.
+
+    private bool lastDown;   // the result of the last door check (for DebugReport)
+    private bool lastShop;
+    private int updatesRun;  // how many times Update got as far as the door check (for DebugReport)
+
+    /// <summary>
+    /// A plain-words snapshot of everything that decides whether the doors can fire right now. Read by CoopDebugOverlay (F9 in play mode).
+    /// </summary>
+    public string DebugReport()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("FloorController '").Append(name).Append("'  floor ").Append(CurrentFloor);
+
+        int index = CurrentRowIndex();
+        sb.Append("  (Floors list has ").Append(floors != null ? floors.Length : 0).Append(" row(s); using row ").Append(index).Append(")");
+
+        string blocker = "none";
+        if (IsChangingFloor) blocker = "a FLOOR CHANGE is running (IsChangingFloor)";
+        else if (PauseController.IsPaused) blocker = "PauseController.IsPaused";
+        else if (MenuController.IsOpen) blocker = "MenuController.IsOpen";
+        else if (LightsOutScreen.IsActive) blocker = "LightsOutScreen.IsActive";
+        sb.Append("\n   door check blocked by: ").Append(blocker);
+        sb.Append("\n   door checks run so far: ").Append(updatesRun);
+        sb.Append("\n   doors armed: ").Append(doorsArmed).Append("   last check -> Next Floor group ready: ").Append(lastDown)
+          .Append(", Shop group ready: ").Append(lastShop);
+
+        if (index >= 0 && floors[index] != null && floors[index].doors != null)
+        {
+            sb.Append(FloorDoor.Explain(floors[index].doors));
+        }
+        else
+        {
+            sb.Append("\n   this floor has NO doors listed in the Floors list");
+        }
+        return sb.ToString();
+    }
 
     private const float DoorStallSeconds = 6f;          // somebody has stood on a door this long without the floor changing
     private const float DoorStallRepeatSeconds = 20f;   // and then it is not repeated for this long

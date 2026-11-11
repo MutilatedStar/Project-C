@@ -127,6 +127,9 @@ public class CoopDowned : MonoBehaviour
     /// <summary>True while knocked down and waiting to be revived (or to blow up).</summary>
     public bool IsDown { get { return state == DownState.Down; } }
 
+    /// <summary>Up, Down (knocked down, can be revived) or BlownUp (gave up, waiting to respawn). Read by CoopDebugOverlay.</summary>
+    public DownState CurrentState { get { return state; } }
+
     /// <summary>True from the blow-up until the respawn.</summary>
     public bool IsBlownUp { get { return state == DownState.BlownUp; } }
 
@@ -221,6 +224,9 @@ public class CoopDowned : MonoBehaviour
     private bool healWarned;
     private static bool scoreWarned;
     private static bool wipeRaised;   // TeamWiped was already raised for the team being all down (cleared when anybody gets up)
+    private static bool noScreenWarned;
+    private static float strayStart = -1f;   // when everyone with a CoopDowned was first seen down while the game was not over
+    private static bool strayWarned;
 
     // ------------------------------------------------------------ setup
 
@@ -291,6 +297,9 @@ public class CoopDowned : MonoBehaviour
         All.Clear();
         scoreWarned = false;
         wipeRaised = false;
+        noScreenWarned = false;
+        strayStart = -1f;
+        strayWarned = false;
     }
 
     // ------------------------------------------------------------ every frame
@@ -338,12 +347,55 @@ public class CoopDowned : MonoBehaviour
         if (!CoopHealth.AllCountedDead)
         {
             wipeRaised = false;
+            WatchForStrayPlayer();
             return;
         }
 
+        strayStart = -1f;
         if (wipeRaised) return;
         wipeRaised = true;
+
+        if (!LightsOutScreen.Available && !noScreenWarned)
+        {
+            noScreenWarned = true;
+            Debug.LogWarning("CoopDowned: every player is down, but there is no LightsOutScreen switched on in this scene, so there is no game-over screen " +
+                             "to show (the team respawns instead). Put the LightsOutScreen component on an ACTIVE object in this scene.", this);
+        }
         CoopHealth.RaiseTeamWiped();
+    }
+
+    // Everybody who can be knocked down is down, yet the team does not count as wiped: somebody that counts is still alive (or something raised
+    // TeamWipeBlockers). After a few seconds, say who, so a stray extra player object or a blocker is easy to spot in the Console.
+    private static void WatchForStrayPlayer()
+    {
+        for (int i = 0; i < All.Count; i++)
+        {
+            if (All[i] != null && All[i].state == DownState.Up)
+            {
+                strayStart = -1f;
+                strayWarned = false;
+                return;
+            }
+        }
+
+        if (strayStart < 0f) strayStart = Time.unscaledTime;
+        if (strayWarned || Time.unscaledTime - strayStart < 3f) return;
+        strayWarned = true;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append("CoopDowned: every player with a CoopDowned is down, but the game is not over, so no game-over screen comes up. ");
+        if (CoopHealth.TeamWipeBlockers > 0) sb.Append("CoopHealth.TeamWipeBlockers is " + CoopHealth.TeamWipeBlockers + " (something raised it and never lowered it). ");
+        sb.Append("Every CoopHealth in the scene right now: ");
+
+        for (int i = 0; i < CoopHealth.Players.Count; i++)
+        {
+            CoopHealth p = CoopHealth.Players[i];
+            if (p == null) continue;
+            sb.Append("[" + p.name + ", Player " + p.PlayerNumber + ", health " + p.CurrentHealth +
+                      (CoopRules.Counts(p.PlayerNumber) ? ", counts" : ", does not count") + "] ");
+        }
+        sb.Append("Any player that counts and still has health keeps the game going.");
+        Debug.LogWarning(sb.ToString());
     }
 
     private void UpdateDown(float dt)
