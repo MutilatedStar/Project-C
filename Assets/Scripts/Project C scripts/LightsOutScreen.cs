@@ -22,11 +22,15 @@ using UnityEngine.InputSystem.Controls;
 ///      A CONTROLLER works too: D-pad or left stick up / down to choose, South (A on Xbox, Cross on PlayStation) to pick. ANY connected
 ///      controller can drive the menu, not only the one a player was using, because every player's input is locked while this screen is up.
 ///
-///   Retry          behind the black screen every player that counts is back on full health, put back on THEIR spot for the floor
-///                  they are on (FloorController's Floors list, element 0 = floor 1), and that floor's foes start over. Then the
-///                  screen fades out. On the FIRST floor (room 0) they go back to where they spawned when the scene started.
+///   Retry          behind the black screen every player that counts is back on full health (anybody knocked down or blown up
+///                  by CoopDowned stands up again), put back on THEIR spot for the floor they are on (FloorController's Floors
+///                  list, element 0 = floor 1), and that floor's foes start over. Then the screen fades out. On the FIRST floor
+///                  (room 0) they go back to where they spawned when the scene started.
 ///   Level Select   resets the run (GameReset.ResetRun, the same as the pause menu's Quit) and loads the Level Select scene.
 ///   Menu           resets the run and loads the Main Menu scene.
+///
+/// SOUND: drag a clip into Lights Out Clip (Inspector). It plays once, the moment the last player goes down (Lights Out Sound Delay starts it
+/// later, for example when the screen begins to fade). It follows the Sound On/Off setting and keeps playing while the game is frozen.
 ///
 /// While it is up: players are locked, foes are frozen, Time.timeScale is 0, hazards and doors do nothing, pausing is switched off, and the
 /// mouse cursor is freed. All of that is put back when the screen is gone.
@@ -53,6 +57,14 @@ public class LightsOutScreen : MonoBehaviour
     [SerializeField] private string levelSelectSceneName = "LevelSelect";
     [Tooltip("Exact name of the Main Menu scene (must be in Scenes In Build). \"MainMenu\" and \"Main Menu\" are tried if this can't be loaded.")]
     [SerializeField] private string mainMenuSceneName = "MainMenu";
+
+    [Header("Sound (optional, follows the Sound On/Off setting)")]
+    [Tooltip("Plays once when the lights go out: the moment the last player goes down. Drag your clip in here; leave it empty for silence.")]
+    [SerializeField] private AudioClip lightsOutClip;
+    [SerializeField, Range(0f, 1f)] private float lightsOutVolume = 1f;
+    [Tooltip("Seconds (real time) after the last player goes down before the clip starts. 0 = the instant they are all down. " +
+             "Set it to the same number as Delay Before Fade (below) to start the clip just as the screen begins to go dark.")]
+    [SerializeField, Min(0f)] private float lightsOutSoundDelay = 0f;
 
     [Header("Keys")]
     [SerializeField] private KeyCode[] upKeys = { KeyCode.W, KeyCode.UpArrow };
@@ -114,6 +126,10 @@ public class LightsOutScreen : MonoBehaviour
     /// <summary>True while the screen is up, and for the rest of the frame in which it closed (so the key that picked Retry can't also move a player).</summary>
     public static bool BlocksInput => IsActive || closedFrame == Time.frameCount;
 
+    /// <summary>True while a LightsOutScreen is switched on in the scene. CoopDowned reads it: with no game-over screen to take over, a team that is
+    /// all down simply respawns instead of waiting for a screen that will never come.</summary>
+    public static bool Available { get; private set; }
+
     private static int closedFrame = -1;
 
     // Static values survive between Play sessions when "Reload Domain" is switched off, so they are reset by hand.
@@ -121,6 +137,7 @@ public class LightsOutScreen : MonoBehaviour
     private static void ResetStatics()
     {
         IsActive = false;
+        Available = false;
         closedFrame = -1;
     }
 
@@ -159,6 +176,7 @@ public class LightsOutScreen : MonoBehaviour
 
     private FloorController _floorController;
     private bool _warnedNoSpot;
+    private AudioSource _audio;       // plays the Lights Out clip (2D, keeps playing while time is frozen)
 
     // ------------------------------------------------------------ lifecycle
 
@@ -166,16 +184,19 @@ public class LightsOutScreen : MonoBehaviour
     {
         IsActive = false;
         BuildUi();
+        BuildAudio();
         _root.SetActive(false);
     }
 
     private void OnEnable()
     {
+        Available = true;
         CoopHealth.TeamWiped += HandleTeamWiped;
     }
 
     private void OnDisable()
     {
+        Available = false;
         CoopHealth.TeamWiped -= HandleTeamWiped;
     }
 
@@ -191,7 +212,32 @@ public class LightsOutScreen : MonoBehaviour
 
         IsActive = true;       // from this moment the players hold still and the doors and hazards do nothing
         LockPlayers(true);
+        if (lightsOutClip != null) StartCoroutine(PlayLightsOutSound());
         StartCoroutine(ShowRoutine());
+    }
+
+    // ------------------------------------------------------------ sound
+
+    // A 2D source on its own child object, so both split-screen players hear it, it keeps playing while Time.timeScale is 0, and no
+    // other AudioSource on this object is touched.
+    private void BuildAudio()
+    {
+        var go = new GameObject("LightsOutSound");
+        go.transform.SetParent(transform, false);
+
+        _audio = go.AddComponent<AudioSource>();
+        _audio.playOnAwake = false;
+        _audio.loop = false;
+        _audio.spatialBlend = 0f;
+        _audio.ignoreListenerPause = true;
+    }
+
+    private IEnumerator PlayLightsOutSound()
+    {
+        if (lightsOutSoundDelay > 0f) yield return new WaitForSecondsRealtime(lightsOutSoundDelay);
+        if (_audio == null || lightsOutClip == null || !GameSettings.SoundOn) yield break;
+
+        _audio.PlayOneShot(lightsOutClip, lightsOutVolume);
     }
 
     // ------------------------------------------------------------ main loop
@@ -465,6 +511,8 @@ public class LightsOutScreen : MonoBehaviour
 
         // Behind the black screen: everyone back on their feet, back on their spot, the floor's foes started over.
         ReviveTeam();
+        CoopDowned.ResetAllForRetry();   // knocked-down / blown-up players stand up again (gray, tipped over, hidden, locked all undone)
+        LockPlayers(true);               // ...but nobody may move until the screen is clear (standing up unlocks them)
         yield return null;   // one frame for whatever listens to the health change (animations, colliders) to catch up
         PlaceTeam();
 

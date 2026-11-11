@@ -64,7 +64,6 @@ public class FloorDoor : MonoBehaviour
     private SpriteRenderer[] targets;
     private Color[] originals;
     private Color overlay = new Color(1f, 1f, 1f, 0f);   // rgb = the hue shown, a = how much of it covers the picture
-    private readonly Collider2D[] buffer = new Collider2D[24];
     private int occupants;
     private bool showReady;
 
@@ -153,6 +152,56 @@ public class FloorDoor : MonoBehaviour
         return ready;
     }
 
+    /// <summary>True while somebody is standing on at least one of these doors (any action). Used to notice a door that is occupied but never fires.</summary>
+    public static bool AnyOccupied(FloorDoor[] doors)
+    {
+        if (doors == null) return false;
+        for (int i = 0; i < doors.Length; i++)
+        {
+            if (doors[i] != null && doors[i].IsAvailable && doors[i].occupants != 0) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// A plain-words report of why this floor's doors are not firing right now: who counts, who is on which door, how many doors are
+    /// switched on. Built only when asked for (FloorController asks once, when somebody has stood on a door for a few seconds and
+    /// nothing happened), so it costs nothing while the game runs.
+    /// </summary>
+    public static string Explain(FloorDoor[] doors)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        int total = doors != null ? doors.Length : 0;
+        int available = 0;
+        for (int i = 0; i < total; i++)
+        {
+            if (doors[i] != null && doors[i].IsAvailable) available++;
+        }
+        sb.Append("\n   doors listed for this floor: ").Append(total).Append(", switched on and usable: ").Append(available);
+
+        for (int n = 1; n <= MaxPlayers; n++)
+        {
+            CoopHealth p = CoopHealth.Get(n);
+            if (p == null) { if (n <= 2) sb.Append("\n   Player ").Append(n).Append(": not in the game right now"); continue; }
+
+            sb.Append("\n   Player ").Append(n).Append(": ");
+            if (!CoopRules.Counts(n)) { sb.Append("does not count (single player mode), so they are ignored"); continue; }
+            if (!p.IsAlive) { sb.Append("is at 0 health (knocked down), so they are not counted as available"); continue; }
+
+            int door = -1;
+            for (int i = 0; doors != null && i < doors.Length; i++)
+            {
+                if (doors[i] != null && doors[i].IsAvailable && (doors[i].occupants & (1 << n)) != 0) { door = i; break; }
+            }
+            if (door >= 0) sb.Append("is standing on door ").Append(door).Append(" ('").Append(doors[door].name).Append("')");
+            else sb.Append("is NOT on any door");
+        }
+
+        sb.Append("\n   Every available player must stand on a door, and the players must fill the doors (one player per door).");
+        return sb.ToString();
+    }
+
     /// <summary>Makes every door in the list forget who was on it (colours fade out). Used when the floor changes.</summary>
     public static void ClearAll(FloorDoor[] doors)
     {
@@ -165,26 +214,69 @@ public class FloorDoor : MonoBehaviour
         }
     }
 
-    // Which players' colliders touch this door right now, as a bit mask (bit n = Player n).
+    // Which players touch this door right now, as a bit mask (bit n = Player n).
+    //
+    // Each player is asked directly ("does any of YOUR colliders overlap this door?") instead of reading a fixed-size list of everything
+    // that touches the door and hoping the players are in it. A busy door (foes, pickups, props, the other player's sword) could fill that
+    // list and push a player out of it, and then the door silently never saw them. Asking per player can't miss anybody.
     private int ScanOverlaps()
     {
-        ContactFilter2D filter = new ContactFilter2D();
-        filter.useTriggers = true;   // a player whose only collider is a trigger still counts
-
-        int hits = zone.Overlap(filter, buffer);
         int mask = 0;
-        for (int i = 0; i < hits; i++)
+        for (int n = 1; n <= MaxPlayers; n++)
         {
-            Collider2D c = buffer[i];
-            if (c == null) continue;
-
-            CoopHealth who = c.GetComponentInParent<CoopHealth>();
-            if (who == null) continue;
-
-            int number = who.PlayerNumber;
-            if (number >= 1 && number <= MaxPlayers) mask |= 1 << number;
+            CoopHealth p = CoopHealth.Get(n);
+            if (p != null && Touches(p, n)) mask |= 1 << n;
         }
         return mask;
+    }
+
+    // Each player's colliders, found once per player (not every frame).
+    private static readonly CoopHealth[] colliderOwner = new CoopHealth[MaxPlayers + 1];
+    private static readonly Collider2D[][] playerColliders = new Collider2D[MaxPlayers + 1][];
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        for (int n = 0; n <= MaxPlayers; n++)
+        {
+            colliderOwner[n] = null;
+            playerColliders[n] = null;
+        }
+    }
+
+    private static Collider2D[] CollidersOf(int number, CoopHealth player)
+    {
+        Collider2D[] cached = playerColliders[number];
+        bool stale = colliderOwner[number] != player || cached == null;
+        for (int i = 0; !stale && i < cached.Length; i++)
+        {
+            if (cached[i] == null) stale = true;   // one was destroyed: look again
+        }
+
+        if (stale)
+        {
+            colliderOwner[number] = player;
+            cached = player.GetComponentsInChildren<Collider2D>(true);
+            playerColliders[number] = cached;
+        }
+        return cached;
+    }
+
+    // True if any switched-on collider of this player (solid or trigger) overlaps the door, or the player's own position is inside it.
+    private bool Touches(CoopHealth player, int number)
+    {
+        Collider2D[] colliders = CollidersOf(number, player);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider2D c = colliders[i];
+            if (c == null || !c.enabled || !c.gameObject.activeInHierarchy) continue;
+
+            ColliderDistance2D d = zone.Distance(c);
+            if (d.isValid && d.isOverlapped) return true;
+        }
+
+        // A player whose colliders are all switched off can still stand on the door.
+        return zone.OverlapPoint((Vector2)player.transform.position);
     }
 
     // ------------------------------------------------------------ setup

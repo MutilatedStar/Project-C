@@ -586,9 +586,9 @@ public class SplitScreenCamera : MonoBehaviour
             t = health.transform;
         }
 
-        // Lost all their health: the camera lets go, EXCEPT while CoopDowned is looking after them (knocked down, blown up, waiting to
-        // respawn). It keeps following them, so each player's half of the screen never goes blind and the view is already there
-        // the moment they are revived or respawn.
+        // Lost all their health (knocked down, blown up, waiting to respawn): the camera lets go of them, so their half of the screen
+        // follows the other player (or holds still when nobody is left). It picks them up again by itself the moment their health is
+        // back, after a revive or a respawn. Only a script that sets KeepCameraOn on purpose keeps the camera on a player at 0 health.
         if (health != null && !health.IsAlive && !health.KeepCameraOn) return null;
 
         // Explicit Single Player Mode remains authoritative, including when its chosen target is not Player 1.

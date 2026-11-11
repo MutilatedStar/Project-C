@@ -55,16 +55,28 @@ namespace Ilumisoft.HealthSystem
         public bool Grace { get; set; }
 
         /// <summary>
-        /// While true, SplitScreenCamera keeps following this player even though their health is 0 (CoopDowned sets it from the moment
-        /// they are knocked down until they are back on their feet), so the camera never loses them.
+        /// While true, SplitScreenCamera keeps following this player even though their health is 0. CoopDowned no longer sets it: the camera
+        /// now lets go of a knocked-down player and picks them up again by itself once their health is back (revive or respawn).
+        /// Still here for any script of yours that wants the camera to stay on someone at 0 health.
         /// </summary>
         public bool KeepCameraOn { get; set; }
 
         /// <summary>
-        /// Raise this while something (CoopDowned) will bring a player back, so "everyone is at 0 health" is not the end of the game.
-        /// While it is above 0, AllCountedDead stays false and TeamWiped is not raised.
+        /// Raise this while something will bring a team that is at 0 health back, so "everyone is at 0 health" is not the end of the game.
+        /// While it is above 0, AllCountedDead stays false and TeamWiped is not raised. CoopDowned does NOT use it any more: everybody
+        /// knocked down now ends the game (LightsOutScreen). Leave it at 0 unless you add your own rescue.
         /// </summary>
         public static int TeamWipeBlockers;
+
+        /// <summary>
+        /// Raises TeamWiped if every player that counts is at 0 health right now (and nothing holds it back). CoopDowned calls this as a
+        /// safety net, so a team that is all down always reaches the game-over screen even if the last death was somehow missed.
+        /// Does nothing while somebody is still alive.
+        /// </summary>
+        public static void RaiseTeamWiped()
+        {
+            if (AllCountedDead && TeamWiped != null) TeamWiped();
+        }
 
         public int PlayerNumber
         {
@@ -129,8 +141,8 @@ namespace Ilumisoft.HealthSystem
         }
 
         /// <summary>
-        /// True once every player that counts is dead (and there is at least one). Always false while TeamWipeBlockers is above 0
-        /// (CoopDowned holds it up while knocked-down players can still be revived or respawn), so TeamWiped is not raised either.
+        /// True once every player that counts is at 0 health (and there is at least one), knocked down or not. Always false while
+        /// TeamWipeBlockers is above 0, so TeamWiped is not raised either.
         /// </summary>
         public static bool AllCountedDead
         {

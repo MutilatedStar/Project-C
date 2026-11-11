@@ -13,23 +13,27 @@ using Cainos.PixelArtTopDown_Basic;
 ///   REVIVED        another player (alive, in the game) stands over them and HOLDS Attack: a bar fills over Revive Seconds
 ///                  (each extra tap of Attack adds a bonus, so mashing is faster than holding). The player gets up where they fell, with
 ///                  Revive Health Percent of their health, their colours and glow back, and a short safe moment (Grace Seconds).
-///   BLOWN UP       if nobody can revive them (they are alone, or the other player is down too) they press Attack and burst into
-///                  little pieces of their own picture. Their score is reset (Reset Score On Blow Up).
+///   BLOWN UP       a downed player can ALWAYS give up: they press Attack (after Blow Up Delay) and burst into little pieces of their
+///                  own picture, even if the other player is alive. That is the way out when they fell somewhere nobody can reach. The
+///                  press is ignored only while the other player is actively holding Attack to revive them. Their score is reset
+///                  (Reset Score On Blow Up).
 ///   RESPAWN        Respawn Delay seconds later they come back at full health (Respawn Health Percent):
 ///                    room 0            at their point of origin (where they stood when the game started)
 ///                    any other room    at a CoopSpawnPoint for that room if you placed one, otherwise where they first arrived in it
 ///                  "Room" is the floor number FloorController reports. Anything else that moves players between rooms can call
 ///                  CoopDowned.EnterRoom(number).
-///   CAMERA         SplitScreenCamera keeps following a downed or blown-up player the whole time (CoopHealth.KeepCameraOn), so their
-///                  half of the screen never goes blind, and it snaps onto them when they respawn. Reviving needs no snap: the camera never left.
+///   EVERYONE DOWN  when every player that counts is at 0 health, nobody is left to revive anyone: whoever is still lying there blows up
+///                  at once (Blow Up When Team Wiped), nobody respawns, and CoopHealth.TeamWiped is raised so LightsOutScreen (the game-over
+///                  screen with Retry / Level Select / Menu) comes up. LightsOutScreen's Retry calls CoopDowned.ResetAllForRetry().
+///   CAMERA         SplitScreenCamera lets go of a downed or blown-up player (their half follows the other player, or holds still if
+///                  both are down) and takes them back by itself when their health is back: after a revive, or after a respawn (which also
+///                  snaps the cameras onto them, see Snap Camera On Respawn).
+///   SOUND          Fall Clip plays when a player is knocked down, Blow Up Clip when they burst, Revive Clip when they get up.
 ///
 /// SET UP: put this on every player prefab (Player 1, Player 2, or the one shared prefab), next to CoopHealth. Nothing else to wire up:
 /// the sprite, Animator, Rigidbody2D, PlayerGlow and TopDownJump are found on the player by themselves. Needs the updated CoopHealth,
-/// PlayerInputSource and SplitScreenCamera (small additions: KeepCameraOn / Grace / TeamWipeBlockers, AttackPressedEvenIfLocked,
+/// PlayerInputSource and SplitScreenCamera (small additions: Grace / RaiseTeamWiped, AttackPressedEvenIfLocked,
 /// SnapToPlayers) and PlayerHealthAccess.Heal (already used by SwordController).
-///
-/// While this script is on, CoopHealth.TeamWiped is held back (Respawn Replaces Team Wipe), because a team at 0 health can now
-/// always blow up and respawn instead of ending the game.
 /// </summary>
 [DisallowMultipleComponent]
 [DefaultExecutionOrder(200)]
@@ -65,10 +69,12 @@ public class CoopDowned : MonoBehaviour
     [SerializeField, Min(0f)] private float graceSeconds = 1.5f;
 
     [Header("Blowing up and respawning")]
-    [Tooltip("Seconds after the fall before the downed player's Attack press counts, so the swing that was going on when they were hit can't blow them up by accident.")]
+    [Tooltip("Seconds after the fall before the downed player's Attack press counts, so the swing that was going on when they were hit can't blow them up by accident. " +
+             "A downed player can always blow up with Attack after this, even when the other player is alive (they just can't while that player is reviving them).")]
     [SerializeField, Min(0f)] private float blowUpDelay = 0.75f;
-    [Tooltip("OFF: a downed player can only blow up when nobody can revive them (alone, or the other player is down too). ON: they can always give up.")]
-    [SerializeField] private bool canGiveUpWhilePartnerAlive = false;
+    [Tooltip("ON (recommended): when every player that counts is at 0 health, whoever is still lying down blows up straight away and the game-over screen " +
+             "(LightsOutScreen) comes up. OFF: they stay lying there until the screen takes over.")]
+    [SerializeField] private bool blowUpWhenTeamWiped = true;
     [Tooltip("Seconds between blowing up and coming back.")]
     [SerializeField, Min(0.1f)] private float respawnDelay = 1.5f;
     [Tooltip("Health a respawned player has, as a fraction of their maximum.")]
@@ -77,8 +83,6 @@ public class CoopDowned : MonoBehaviour
     [SerializeField] private bool resetScoreOnBlowUp = true;
     [Tooltip("ON: both cameras jump straight onto the players when someone respawns, instead of gliding across the level.")]
     [SerializeField] private bool snapCameraOnRespawn = true;
-    [Tooltip("ON (recommended): while this script is on, 'everybody is down' is not the end of the game: CoopHealth.TeamWiped is not raised, because the team can always respawn.")]
-    [SerializeField] private bool respawnReplacesTeamWipe = true;
     [Tooltip("Seconds to wait after the players arrive in a new room before remembering where they stand as that room's respawn spot. Raise it if your doors move the players late.")]
     [SerializeField, Min(0f)] private float roomEntryDelay = 0.25f;
 
@@ -99,6 +103,8 @@ public class CoopDowned : MonoBehaviour
     [SerializeField, Min(0.1f)] private float effectLife = 3f;
 
     [Header("Sound (optional, follows the Sound On/Off setting)")]
+    [Tooltip("Plays the moment a player is knocked down (the fall).")]
+    [SerializeField] private AudioClip fallClip;
     [SerializeField] private AudioClip blowUpClip;
     [SerializeField] private AudioClip reviveClip;
     [SerializeField, Range(0f, 1f)] private float soundVolume = 0.8f;
@@ -212,9 +218,9 @@ public class CoopDowned : MonoBehaviour
     private Vector3 roomEntry;
     private bool roomEntrySet;
 
-    private bool blockerAdded;
     private bool healWarned;
     private static bool scoreWarned;
+    private static bool wipeRaised;   // TeamWiped was already raised for the team being all down (cleared when anybody gets up)
 
     // ------------------------------------------------------------ setup
 
@@ -246,13 +252,6 @@ public class CoopDowned : MonoBehaviour
     private void OnEnable()
     {
         if (!All.Contains(this)) All.Add(this);
-
-        if (respawnReplacesTeamWipe && !blockerAdded)
-        {
-            CoopHealth.TeamWipeBlockers++;
-            blockerAdded = true;
-        }
-
         FloorController.FloorChanged += HandleFloorChanged;
     }
 
@@ -260,12 +259,6 @@ public class CoopDowned : MonoBehaviour
     {
         All.Remove(this);
         FloorController.FloorChanged -= HandleFloorChanged;
-
-        if (blockerAdded)
-        {
-            CoopHealth.TeamWipeBlockers = Mathf.Max(0, CoopHealth.TeamWipeBlockers - 1);
-            blockerAdded = false;
-        }
 
         // Switched off while knocked down (Player 2 removed, a menu...): leave nothing gray, tipped over, hidden or locked behind.
         if (state != DownState.Up) PutBack(false, Vector3.zero);
@@ -297,6 +290,7 @@ public class CoopDowned : MonoBehaviour
     {
         All.Clear();
         scoreWarned = false;
+        wipeRaised = false;
     }
 
     // ------------------------------------------------------------ every frame
@@ -331,14 +325,39 @@ public class CoopDowned : MonoBehaviour
         // Paused: everything holds still, and a click that closes a menu must not count as a press.
         if (Time.timeScale <= 0f) return;
 
+        CheckTeamWipe();
+
         if (state == DownState.Down) UpdateDown(dt);
         else UpdateBlownUp(dt);
+    }
+
+    // Safety net: everybody that counts is at 0 health, so the game must end. CoopHealth raises TeamWiped by itself when the last player
+    // dies; this makes sure it is raised (once) even if that moment was missed, so the game-over screen can never fail to come up.
+    private void CheckTeamWipe()
+    {
+        if (!CoopHealth.AllCountedDead)
+        {
+            wipeRaised = false;
+            return;
+        }
+
+        if (wipeRaised) return;
+        wipeRaised = true;
+        CoopHealth.RaiseTeamWiped();
     }
 
     private void UpdateDown(float dt)
     {
         downTime += dt;
         input.Locked = true;   // a menu that unlocked this player must not give them control back
+
+        // ---- everybody is down: nobody is left to revive anyone, so they all burst. This comes BEFORE the BlocksInput check below,
+        // because the game-over screen blocks input from the very moment the team is wiped.
+        if (blowUpWhenTeamWiped && CoopHealth.AllCountedDead)
+        {
+            BlowUp();
+            return;
+        }
 
         if (FloorController.BlocksInput) return;
 
@@ -365,14 +384,21 @@ public class CoopDowned : MonoBehaviour
             return;
         }
 
-        // ---- nobody to revive them: Attack blows them up
-        bool mayBlowUp = downTime >= blowUpDelay && (canGiveUpWhilePartnerAlive || !AnyLivingPartner());
+        // ---- Attack gives up: the downed player bursts and comes back at their spawn spot. Always allowed, even with the other player
+        // alive (they may have fallen somewhere nobody can reach). The one exception: while the other player is actively holding Attack
+        // to revive them, so a stray press can't undo a rescue that is in progress.
+        bool mayBlowUp = downTime >= blowUpDelay && !holding;
         if (mayBlowUp && input.AttackPressedEvenIfLocked) BlowUp();
     }
 
     private void UpdateBlownUp(float dt)
     {
         input.Locked = true;
+
+        // Everybody is out: the game-over screen decides what happens next, so nobody comes back by themselves behind it.
+        // (A scene with no LightsOutScreen has nothing to take over, so there the team respawns as before.)
+        if (LightsOutScreen.Available && CoopHealth.AllCountedDead) return;
+
         respawnLeft -= dt;
         if (respawnLeft <= 0f) Respawn();
     }
@@ -423,8 +449,11 @@ public class CoopDowned : MonoBehaviour
         animatorFrozen = false;
 
         health.Grace = false;
-        health.KeepCameraOn = true;   // the camera keeps following them: SplitScreenCamera would otherwise let go at 0 health
         input.Locked = true;
+
+        // The camera is NOT kept on them: SplitScreenCamera lets go of a player at 0 health (their half follows the other player), and
+        // picks them up again by itself the moment their health is back (see Revive and Respawn).
+        PlaySound(fallClip, transform.position);
 
         // Nothing can touch a downed player, and they can't block the one who comes to revive them.
         if (rb != null)
@@ -545,12 +574,35 @@ public class CoopDowned : MonoBehaviour
         if (glow != null && glowWasOn) glow.enabled = true;   // fades back in, like at the start of the game
 
         if (input != null) input.Locked = false;
-        if (health != null) health.KeepCameraOn = false;
 
         HideBar();
         progress = 0f;
         reviverNear = false;
+        wipeRaised = false;   // somebody is up again, so the next time everyone is down counts as a new wipe
         state = DownState.Up;
+    }
+
+    /// <summary>
+    /// Everybody who is knocked down or blown up gets back on their feet right where they are (no respawn spot, no safe moment).
+    /// LightsOutScreen's Retry calls this behind its black screen, after it has refilled every player's health and before it moves
+    /// them to the floor's start. Players who are already up are left alone.
+    /// </summary>
+    public static void ResetAllForRetry()
+    {
+        wipeRaised = false;
+        for (int i = 0; i < All.Count; i++)
+        {
+            if (All[i] != null) All[i].ForceUp();
+        }
+    }
+
+    private void ForceUp()
+    {
+        if (state == DownState.Up) return;
+
+        DestroyPieces();   // a burst that was still flying is gone
+        PutBack(false, Vector3.zero);
+        health.Grace = false;
     }
 
     private void StartGrace()
@@ -582,18 +634,6 @@ public class CoopDowned : MonoBehaviour
             found = p;
         }
         return found;
-    }
-
-    // Is anybody alive (and in the game) who could, in principle, come and revive this player?
-    private bool AnyLivingPartner()
-    {
-        for (int i = 0; i < CoopHealth.Players.Count; i++)
-        {
-            CoopHealth p = CoopHealth.Players[i];
-            if (p == null || p == health) continue;
-            if (p.IsAlive && CoopRules.Counts(p.PlayerNumber)) return true;
-        }
-        return false;
     }
 
     // ------------------------------------------------------------ rooms

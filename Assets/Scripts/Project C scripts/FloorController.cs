@@ -490,13 +490,45 @@ public class FloorController : MonoBehaviour
         if (!down && !shop)
         {
             doorsArmed = true;   // seen not ready: the next time they ARE ready, they fire
+            WatchDoors(row, false);
             return;
         }
-        if (!doorsArmed) return;
+        if (!doorsArmed)
+        {
+            WatchDoors(row, true);
+            return;
+        }
 
+        doorStallSeconds = 0f;
         doorsArmed = false;
         if (down) GoDown();
         else TryOpenShop();
+    }
+
+    // ---- "somebody is on a door and nothing happens": say why, once in a while.
+    // Only with Log Tile Under Player on (the Console debug switch of this script). It is just a Console line: nothing changes in the game.
+
+    private const float DoorStallSeconds = 6f;          // somebody has stood on a door this long without the floor changing
+    private const float DoorStallRepeatSeconds = 20f;   // and then it is not repeated for this long
+    private float doorStallSeconds;
+
+    private void WatchDoors(FloorLink row, bool readyButNotArmed)
+    {
+        if (!logTileUnderPlayer || !FloorDoor.AnyOccupied(row.doors))
+        {
+            doorStallSeconds = 0f;
+            return;
+        }
+
+        doorStallSeconds += Time.unscaledDeltaTime;
+        if (doorStallSeconds < DoorStallSeconds) return;
+        doorStallSeconds = -DoorStallRepeatSeconds;
+
+        string why = readyButNotArmed
+            ? "The doors ARE ready, but they were already ready the moment this floor started, so they wait until somebody steps off a door and on again."
+            : "The doors are not ready yet:";
+        Debug.Log("FloorController: somebody has been standing on a door for " + DoorStallSeconds.ToString("0") + " seconds and the team has not gone down. " +
+                  why + FloorDoor.Explain(row.doors), this);
     }
 
     // Makes the floor the team has just arrived on the live one: its doors start being checked, the other floors' doors forget
