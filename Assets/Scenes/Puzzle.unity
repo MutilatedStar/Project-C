@@ -34322,8 +34322,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::LightsOutScreen
   levelSelectSceneName: LevelSelect
   mainMenuSceneName: MainMenu
-  lightsOutClip: {fileID: 0}
-  lightsOutVolume: 1
+  lightsOutClip: {fileID: 8300000, guid: 81572f0917f0cfa42b015364aae92bf2, type: 3}
+  lightsOutVolume: 0.19
   lightsOutSoundDelay: 0
   upKeys: 7700000011010000i
   downKeys: 7300000012010000i
@@ -51497,9 +51497,6 @@ PrefabInstance:
     m_RemovedGameObjects: []
     m_AddedGameObjects:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
-      insertIndex: 0
-      addedObject: {fileID: 155863150}
-    - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1540528868}
     - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
@@ -51508,6 +51505,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 730967807}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 155863150}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: 2

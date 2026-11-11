@@ -232,6 +232,16 @@ public class CoopDowned : MonoBehaviour
 
     private void Awake()
     {
+        // A CoopDowned on a CHILD of a player is part of that player, not a player of its own. Switch it off before it asks the PlayerInputHub
+        // for a slot (which would hand it the next free one, "Player 3", and make the doors and the game-over screen wait for it).
+        if (CoopHealth.IsNestedInPlayer(this))
+        {
+            Debug.LogWarning("CoopDowned on '" + name + "' sits inside another player, so it is switched off and does nothing. " +
+                             "You can remove it from '" + name + "'.", this);
+            enabled = false;
+            return;
+        }
+
         health = GetComponent<CoopHealth>();
         hc = GetComponent<HealthComponent>();
         if (hc == null) hc = GetComponentInParent<HealthComponent>();

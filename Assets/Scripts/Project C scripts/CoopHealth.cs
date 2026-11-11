@@ -82,9 +82,37 @@ namespace Ilumisoft.HealthSystem
         {
             get
             {
-                if (_input == null) _input = PlayerInputSource.For(gameObject);
+                // A CoopHealth that sits on a CHILD of a player is that player, not a new one: it must never ask the PlayerInputHub for a slot
+                // of its own (the hub would hand it the next free one, "Player 3").
+                if (_input == null) _input = PlayerInputSource.For(PlayerObjectOf(this));
                 return _input != null ? _input.playerNumber : 1;
             }
+        }
+
+        /// <summary>
+        /// True when this component sits on a child of an object that already has a CoopHealth, for example an empty child object that got a
+        /// CoopHealth or CoopDowned added by mistake. That is part of the player above it, not a player of its own, so it is not counted.
+        /// </summary>
+        public static bool IsNestedInPlayer(Component component)
+        {
+            if (component == null) return false;
+            Transform parent = component.transform.parent;
+            return parent != null && parent.GetComponentInParent<CoopHealth>(true) != null;
+        }
+
+        // The outermost object with a CoopHealth above (or at) this one: the real player.
+        private static GameObject PlayerObjectOf(CoopHealth health)
+        {
+            GameObject owner = health.gameObject;
+            Transform parent = health.transform.parent;
+            while (parent != null)
+            {
+                CoopHealth up = parent.GetComponentInParent<CoopHealth>(true);
+                if (up == null) break;
+                owner = up.gameObject;
+                parent = up.transform.parent;
+            }
+            return owner;
         }
 
         // ------------------------------------------------------------ damage
@@ -125,6 +153,14 @@ namespace Ilumisoft.HealthSystem
 
         private void OnEnable()
         {
+            if (IsNestedInPlayer(this))
+            {
+                // Not a player: counting it would add a phantom "Player 3" that never gets hurt, so the doors and the game-over screen would wait for it forever.
+                Debug.LogWarning("CoopHealth on '" + name + "' sits inside the player '" + PlayerObjectOf(this).name + "', so it is not counted as a player of its own " +
+                                 "and does nothing. You can remove this component (and any CoopDowned next to it) from '" + name + "'.", this);
+                return;
+            }
+
             if (!Players.Contains(this)) Players.Add(this);
             OnHealthEmpty += HandleEmpty;
         }
