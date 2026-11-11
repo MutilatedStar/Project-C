@@ -811,12 +811,11 @@ MonoBehaviour:
   reviveHealthPercent: 0.5
   graceSeconds: 1.5
   blowUpDelay: 0.75
-  canGiveUpWhilePartnerAlive: 0
+  blowUpWhenTeamWiped: 1
   respawnDelay: 1.5
   respawnHealthPercent: 1
   resetScoreOnBlowUp: 1
   snapCameraOnRespawn: 1
-  respawnReplacesTeamWipe: 1
   roomEntryDelay: 0.25
   pieceColumns: 4
   pieceRows: 4
@@ -826,6 +825,7 @@ MonoBehaviour:
   pieceLife: 1.1
   blowUpEffect: {fileID: 0}
   effectLife: 3
+  fallClip: {fileID: 0}
   blowUpClip: {fileID: 0}
   reviveClip: {fileID: 0}
   soundVolume: 0.8
@@ -34276,6 +34276,83 @@ Transform:
   - {fileID: 1025396723}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &570631211
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 570631212}
+  - component: {fileID: 570631213}
+  m_Layer: 0
+  m_Name: LightsOutScreen
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &570631212
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 570631211}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -28.02069, y: 0.71051025, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &570631213
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 570631211}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a7853515f5e86b24a83c5e86568b3e2d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LightsOutScreen
+  levelSelectSceneName: LevelSelect
+  mainMenuSceneName: MainMenu
+  lightsOutClip: {fileID: 0}
+  lightsOutVolume: 1
+  lightsOutSoundDelay: 0
+  upKeys: 7700000011010000i
+  downKeys: 7300000012010000i
+  confirmKeys: 0d0000000f01000020000000i
+  useControllers: 1
+  confirmButtons: 01000000i
+  stickThreshold: 0.6
+  delayBeforeFade: 1
+  fadeInTime: 1.5
+  titleFadeTime: 0.5
+  menuFadeTime: 0.4
+  holdTime: 0.75
+  fadeOutTime: 1
+  acceptDelay: 0.3
+  freezeTime: 1
+  titleText: LIGHTS OUT
+  retryText: Retry
+  levelSelectText: Level Select
+  menuText: Menu
+  hintText: W / S or Up / Down to choose,  Enter, Space or click to select
+  controllerHintText: D-pad or Left Stick to choose,  A / Cross to select
+  canvasSortingOrder: 600
+  blackOverscan: 5000
+  titlePlateColor: {r: 0.35, g: 0.06, b: 0.06, a: 0.95}
+  titleTextColor: {r: 1, g: 0.93, b: 0.8, a: 1}
+  buttonColor: {r: 0.16, g: 0.16, b: 0.18, a: 1}
+  buttonTextColor: {r: 0.75, g: 0.75, b: 0.78, a: 1}
+  selectedButtonColor: {r: 0.95, g: 0.75, b: 0.25, a: 1}
+  selectedTextColor: {r: 0.1, g: 0.07, b: 0.02, a: 1}
 --- !u!1 &571012491
 GameObject:
   m_ObjectHideFlags: 0
@@ -51848,24 +51925,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 22052c0475154b5498f11f5bc5d5ab4d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FloorController
-  tilemaps: []
-  fountainTileName: Healing Fountain
-  checkOffset: {x: 0, y: 0}
-  nameMatch: 0
-  matchSpriteName: 1
-  logTileUnderPlayer: 1
-  healToFull: 1
-  healAmount: 50
-  usedFountainSprite: {fileID: 0}
-  startingFloor: 1
-  floors: []
-  floorScreen: {fileID: 0}
-  floorLabel: {fileID: 0}
-  floorTextFormat: Floor Level {0}
-  fadeInTime: 1.5
-  holdTime: 0.75
-  fadeOutTime: 1
-  shopSceneName: Shop
 --- !u!114 &1039362047
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -52284,12 +52343,11 @@ MonoBehaviour:
   reviveHealthPercent: 0.5
   graceSeconds: 1.5
   blowUpDelay: 0.75
-  canGiveUpWhilePartnerAlive: 0
+  blowUpWhenTeamWiped: 1
   respawnDelay: 1.5
   respawnHealthPercent: 1
   resetScoreOnBlowUp: 1
   snapCameraOnRespawn: 1
-  respawnReplacesTeamWipe: 1
   roomEntryDelay: 0.25
   pieceColumns: 4
   pieceRows: 4
@@ -52299,6 +52357,7 @@ MonoBehaviour:
   pieceLife: 1.1
   blowUpEffect: {fileID: 0}
   effectLife: 3
+  fallClip: {fileID: 0}
   blowUpClip: {fileID: 8300000, guid: f965e8eaf33064e489736233bec56fb6, type: 3}
   reviveClip: {fileID: 8300000, guid: 7bb166aa1718b9e4f8bdf0bb720e6774, type: 3}
   soundVolume: 0.3
@@ -52730,6 +52789,7 @@ RectTransform:
   - {fileID: 231613217}
   - {fileID: 2085424871}
   - {fileID: 39250695}
+  - {fileID: 2056778241}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
@@ -52970,6 +53030,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::LightsOutScreen
   levelSelectSceneName: LevelSelect
   mainMenuSceneName: MainMenu
+  lightsOutClip: {fileID: 0}
+  lightsOutVolume: 1
+  lightsOutSoundDelay: 0
   upKeys: 7700000011010000i
   downKeys: 7300000012010000i
   confirmKeys: 0d0000000f01000020000000i
@@ -54554,12 +54617,11 @@ MonoBehaviour:
   reviveHealthPercent: 0.5
   graceSeconds: 1.5
   blowUpDelay: 0.75
-  canGiveUpWhilePartnerAlive: 0
+  blowUpWhenTeamWiped: 1
   respawnDelay: 1.5
   respawnHealthPercent: 1
   resetScoreOnBlowUp: 1
   snapCameraOnRespawn: 1
-  respawnReplacesTeamWipe: 1
   roomEntryDelay: 0.25
   pieceColumns: 4
   pieceRows: 4
@@ -54569,6 +54631,7 @@ MonoBehaviour:
   pieceLife: 1.1
   blowUpEffect: {fileID: 0}
   effectLife: 3
+  fallClip: {fileID: 0}
   blowUpClip: {fileID: 8300000, guid: f965e8eaf33064e489736233bec56fb6, type: 3}
   reviveClip: {fileID: 8300000, guid: 7bb166aa1718b9e4f8bdf0bb720e6774, type: 3}
   soundVolume: 0.33
@@ -57646,48 +57709,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b69b2b62bf56a3a4abc582636a971176, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FoeSpawner
-  player: {fileID: 0}
-  levels: []
-  autoStart: 1
-  startLevel: 0
-  spawnDistanceTiles:
-    easy: 10
-    normal: 8
-    hard: 6
-  aliveCapScale:
-    easy: 1
-    normal: 1.25
-    hard: 1.5
-  foeCountScale:
-    easy: 1
-    normal: 1.25
-    hard: 1.6
-  statVariation:
-    easy: 0.05
-    normal: 0.15
-    hard: 0.25
-  tilePixels: 32
-  pixelsPerUnit: 32
-  distanceJitterTiles: 1
-  clearRadiusTiles: 0.4
-  blockedMask:
-    m_Bits: 4294967295
-  floorTilemaps: []
-  floorMask:
-    m_Bits: 0
-  wallTilemaps: []
-  requireClearLine: 1
-  minSpawnDistanceTiles: 3
-  maxPlacementAttempts: 30
-  restrictToSpawnAreas: 1
-  spawnAreas: []
-  spawnCooldown:
-    easy: 2.5
-    normal: 1.5
-    hard: 0.9
-  foeParent: {fileID: 0}
-  idleDespawnSeconds: 120
-  idleDespawnExemptFloors: 010000000400000005000000
 --- !u!114 &1783181721
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -285068,6 +285089,51 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 7682460455917153705, guid: 8d2f9075099bba04589b4263273b2d37, type: 3}
   m_PrefabInstance: {fileID: 645940384}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &2056778239
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2056778241}
+  - component: {fileID: 2056778240}
+  m_Layer: 0
+  m_Name: RetryButton
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &2056778240
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2056778239}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5f668f23d5b096c4bb45239453de909a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RetryButton
+  sceneToLoad: MainMenu
+--- !u!4 &2056778241
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2056778239}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -988.0207, y: -539.2895, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1079388821}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2085424870
 GameObject:
   m_ObjectHideFlags: 0
@@ -285150,24 +285216,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 22052c0475154b5498f11f5bc5d5ab4d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FloorController
-  tilemaps: []
-  fountainTileName: Healing Fountain
-  checkOffset: {x: 0, y: 0}
-  nameMatch: 0
-  matchSpriteName: 1
-  logTileUnderPlayer: 1
-  healToFull: 1
-  healAmount: 50
-  usedFountainSprite: {fileID: 0}
-  startingFloor: 1
-  floors: []
-  floorScreen: {fileID: 0}
-  floorLabel: {fileID: 0}
-  floorTextFormat: Floor Level {0}
-  fadeInTime: 1.5
-  holdTime: 0.75
-  fadeOutTime: 1
-  shopSceneName: Shop
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -285195,3 +285243,4 @@ SceneRoots:
   - {fileID: 1469939629}
   - {fileID: 1619411944}
   - {fileID: 1582288551}
+  - {fileID: 570631212}
