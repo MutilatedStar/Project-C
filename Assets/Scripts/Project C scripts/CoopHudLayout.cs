@@ -187,7 +187,7 @@ public abstract class CoopHudLayout : MonoBehaviour
         int player = index + 1;
         BarState st = states[index];
 
-        CoopHudPanel bar = CoopHudPanel.Get(Group, player);
+        CoopHudPanel bar = CoopHudPanel.ForLayout(Group, player);   // if two panels share a player (auto plate + your own button), the showing one
         if (bar != st.bar)
         {
             st.bar = bar;

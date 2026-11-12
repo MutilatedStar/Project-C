@@ -211,6 +211,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1415844667}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903106, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1418693979}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: 3
@@ -51536,6 +51539,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1039362060}
+    - targetCorrespondingSourceObject: {fileID: 5628018141983903104, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1039362063}
   m_SourcePrefab: {fileID: 100100000, guid: ef67ba864d1ecc042b5f4cf48455c0a6, type: 3}
 --- !u!1 &1039362042 stripped
 GameObject:
@@ -52127,6 +52133,37 @@ MonoBehaviour:
   barHeight: 0.16
   barBackColor: {r: 0.08, g: 0.08, b: 0.1, a: 0.85}
   barFillColor: {r: 0.35, g: 0.9, b: 0.4, a: 1}
+--- !u!114 &1039362063
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1039362042}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 732209082fdc1b54e9f90fc5ff878238, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CoopScorePanel
+  playerNumber: 1
+  footprint: {fileID: 0}
+  fixCanvasAutomatically: 1
+  hideAutoScore: 0
+  font: {fileID: 0}
+  fontSize: 36
+  label: P{0}
+  sharedLabel: TEAM
+  reserveDigits: 6
+  padWithZeros: 0
+  numberColor: {r: 1, g: 1, b: 1, a: 1}
+  player1Color: {r: 0.25, g: 0.55, b: 1, a: 1}
+  player2Color: {r: 1, g: 0.6, b: 0.15, a: 1}
+  player3Color: {r: 0.35, g: 0.9, b: 0.4, a: 1}
+  player4Color: {r: 0.75, g: 0.4, b: 0.95, a: 1}
+  sharedColor: {r: 1, g: 0.85, b: 0.25, a: 1}
+  showPlate: 1
+  plateColor: {r: 0.1, g: 0.1, b: 0.14, a: 0.85}
+  padding: 10
 --- !u!1 &1042535565
 GameObject:
   m_ObjectHideFlags: 0
@@ -52517,7 +52554,8 @@ GameObject:
   - component: {fileID: 1079388835}
   - component: {fileID: 1079388836}
   - component: {fileID: 1079388837}
-  - component: {fileID: 1079388838}
+  - component: {fileID: 1079388840}
+  - component: {fileID: 1079388839}
   m_Layer: 5
   m_Name: UI (1)
   m_TagString: Untagged
@@ -52821,7 +52859,7 @@ MonoBehaviour:
   buttonTextColor: {r: 0.75, g: 0.75, b: 0.78, a: 1}
   selectedButtonColor: {r: 0.95, g: 0.75, b: 0.25, a: 1}
   selectedTextColor: {r: 0.1, g: 0.07, b: 0.02, a: 1}
---- !u!114 &1079388838
+--- !u!114 &1079388839
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -52830,27 +52868,45 @@ MonoBehaviour:
   m_GameObject: {fileID: 1079388820}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 732209082fdc1b54e9f90fc5ff878238, type: 3}
+  m_Script: {fileID: 11500000, guid: 0f95ad82b806fac458edbff7b665e61b, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CoopScorePanel
+  m_EditorClassIdentifier: Assembly-CSharp::CoopScoreLayout
+  mode: 2
+  modeButton:
+    button: {fileID: 1380166072}
+    area: {fileID: 899524798}
+    extraAreas: []
+    hotkey: 0
+    label: {fileID: 0}
+    ignoreInteractable: 0
+    debugLog: 0
+  player1Corner: 3
+  player2Corner: 3
+  mirrorAcross: 2
+  followSwappedViews: 1
+  status: 
+  margin: {x: 24, y: 24}
+  moveSpeed: 12
+--- !u!114 &1079388840
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1079388820}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cc6b683766b49404190b1e9d5093b6f4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CoopScoreBinder
   playerNumber: 1
   footprint: {fileID: 0}
   fixCanvasAutomatically: 1
-  font: {fileID: 0}
-  fontSize: 36
-  label: P{0}
-  sharedLabel: TEAM
-  reserveDigits: 6
-  padWithZeros: 0
-  numberColor: {r: 1, g: 1, b: 1, a: 1}
-  player1Color: {r: 0.25, g: 0.55, b: 1, a: 1}
-  player2Color: {r: 1, g: 0.6, b: 0.15, a: 1}
-  player3Color: {r: 0.35, g: 0.9, b: 0.4, a: 1}
-  player4Color: {r: 0.75, g: 0.4, b: 0.95, a: 1}
-  sharedColor: {r: 1, g: 0.85, b: 0.25, a: 1}
-  showPlate: 1
-  plateColor: {r: 0.1, g: 0.1, b: 0.14, a: 0.85}
-  padding: 10
+  scoreObject: {fileID: 1380166070}
+  scoreText: {fileID: 899524799}
+  legacyText: {fileID: 0}
+  format: 'Score: {0}'
+  sharedFormat: 'Team Score: {0}'
 --- !u!1001 &1140496068
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -55390,6 +55446,69 @@ MonoBehaviour:
   - {fileID: 0}
   - {fileID: 0}
   initialised: 1
+--- !u!1 &1418693978
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1418693979}
+  - component: {fileID: 1418693980}
+  m_Layer: 0
+  m_Name: CoopScorePanel
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1418693979
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1418693978}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -29.219742, y: 226.46823, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 29989951}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1418693980
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1418693978}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 732209082fdc1b54e9f90fc5ff878238, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CoopScorePanel
+  playerNumber: 2
+  footprint: {fileID: 0}
+  fixCanvasAutomatically: 1
+  hideAutoScore: 0
+  font: {fileID: 0}
+  fontSize: 36
+  label: P{0}
+  sharedLabel: TEAM
+  reserveDigits: 6
+  padWithZeros: 0
+  numberColor: {r: 1, g: 1, b: 1, a: 1}
+  player1Color: {r: 0.25, g: 0.55, b: 1, a: 1}
+  player2Color: {r: 1, g: 0.6, b: 0.15, a: 1}
+  player3Color: {r: 0.35, g: 0.9, b: 0.4, a: 1}
+  player4Color: {r: 0.75, g: 0.4, b: 0.95, a: 1}
+  sharedColor: {r: 1, g: 0.85, b: 0.25, a: 1}
+  showPlate: 1
+  plateColor: {r: 0.1, g: 0.1, b: 0.14, a: 0.85}
+  padding: 10
 --- !u!1 &1422646435
 GameObject:
   m_ObjectHideFlags: 0

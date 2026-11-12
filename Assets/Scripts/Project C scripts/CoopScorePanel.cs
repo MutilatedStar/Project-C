@@ -17,11 +17,22 @@ using Ilumisoft.HealthSystem;
 ///   3. Add ONE CoopScoreLayout to the scene to place the two panels (Free / Mirror / Auto Snap), like the health bars.
 /// The object stays switched on; the script shows and hides the plate itself as the player comes and goes.
 ///
+/// YOUR OWN SCORE BUTTON: to show the score on a button you made yourself, use CoopScoreBinder (set up like the health bar binder) and
+/// tick Hide Auto Score here on both players' panels, so each player has one score on screen, not two. Hide Auto Score can also be
+/// switched while playing (SetHideAutoScore / CoopScorePanel.SetAllHidden, for a UI Toggle). The same CoopScoreLayout places whichever
+/// one is showing.
+///
 /// Needs CoopHudPanel and CoopHudLayout (the HUD snapping scripts), CoopRules.cs (CoopScore) and HudGroup.Score.
 /// </summary>
 [DisallowMultipleComponent]
 public class CoopScorePanel : CoopHudPanel
 {
+    [Header("Auto score")]
+    [Tooltip("ON: hides this auto-built score (its plate and its text) so only YOUR score button shows (CoopScoreBinder). Tick it on both " +
+             "players' panels when you use your own score buttons, so nobody ends up with two scores. OFF: the auto score shows as before. " +
+             "Can also be switched while playing, and the layout hands the spot to your button by itself.")]
+    public bool hideAutoScore = false;
+
     [Header("Text")]
     [Tooltip("Optional. Leave empty to use TextMeshPro's default font.")]
     public TMP_FontAsset font;
@@ -62,6 +73,11 @@ public class CoopScorePanel : CoopHudPanel
     {
         get
         {
+            if (hideAutoScore)
+            {
+                return "Hide Auto Score is ticked, so the auto-built score is hidden (your own score button, if any, shows instead).";
+            }
+
             if (CoopHealth.Get(playerNumber) == null)
             {
                 return "no CoopHealth with Player Number " + playerNumber + " is in the game (the player prefab needs CoopHealth, " +
@@ -78,10 +94,31 @@ public class CoopScorePanel : CoopHudPanel
         }
     }
 
-    /// <summary>The score panel for this player number, or null.</summary>
+    /// <summary>The auto-built score panel for this player number, or null (a CoopScoreBinder for the same player is not this).</summary>
     public static CoopScorePanel Get(int playerNumber)
     {
-        return Get(HudGroup.Score, playerNumber) as CoopScorePanel;
+        for (int i = 0; i < All.Count; i++)
+        {
+            CoopScorePanel panel = All[i] as CoopScorePanel;
+            if (panel != null && panel.playerNumber == playerNumber) return panel;
+        }
+        return null;
+    }
+
+    /// <summary>Hides or shows this auto-built score (what the Hide Auto Score tick does). Handy for a UI Toggle's On Value Changed.</summary>
+    public void SetHideAutoScore(bool hidden)
+    {
+        hideAutoScore = hidden;
+    }
+
+    /// <summary>Switches Hide Auto Score for EVERY auto-built score panel at once (both players), for one UI Toggle.</summary>
+    public static void SetAllHidden(bool hidden)
+    {
+        for (int i = 0; i < All.Count; i++)
+        {
+            CoopScorePanel panel = All[i] as CoopScorePanel;
+            if (panel != null) panel.hideAutoScore = hidden;
+        }
     }
 
     private RectTransform panelRect;
@@ -152,7 +189,7 @@ public class CoopScorePanel : CoopHudPanel
 
     private void Update()
     {
-        bool show = CoopHealth.Get(playerNumber) != null && CoopRules.Counts(playerNumber);
+        bool show = !hideAutoScore && CoopHealth.Get(playerNumber) != null && CoopRules.Counts(playerNumber);
 
         if (!show)
         {

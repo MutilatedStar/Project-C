@@ -128,6 +128,24 @@ public abstract class CoopHudPanel : MonoBehaviour
         return null;
     }
 
+    /// <summary>
+    /// The panel a layout should place for this player. Normally the only one. When two panels of the same family share a player number
+    /// (the auto-built score plate AND your own score button, say), the one that is showing is placed, so hiding one hands the spot to the other.
+    /// </summary>
+    public static CoopHudPanel ForLayout(HudGroup group, int playerNumber)
+    {
+        CoopHudPanel first = null;
+        for (int i = 0; i < All.Count; i++)
+        {
+            CoopHudPanel panel = All[i];
+            if (panel.Group != group || panel.playerNumber != playerNumber) continue;
+
+            if (panel.IsShown) return panel;
+            if (first == null) first = panel;
+        }
+        return first;
+    }
+
     // ------------------------------------------------------------ size
 
     // A "bar" bigger than this share of the screen is not a bar: its rectangle is stretched, so measure what is drawn instead.
