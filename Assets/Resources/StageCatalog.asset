@@ -1,0 +1,88 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6db5edd877fd4dec92e75ba21706d7ca, type: 3}
+  m_Name: StageCatalog
+  m_EditorClassIdentifier: Assembly-CSharp::StageCatalog
+  stageScene: Puzzle
+  stages:
+  - id: stage-1
+    displayName: Stage 1
+    mode: 0
+    order: 1
+    thumbnail: {fileID: 21300000, guid: 71cd1e2a5c344d8f8074e8842eb3ac4b, type: 3}
+    description: 
+  - id: stage-2
+    displayName: Stage 2
+    mode: 0
+    order: 2
+    thumbnail: {fileID: 21300000, guid: 91fc2218a4f84f75937e857b11bf647b, type: 3}
+    description: 
+  - id: stage-3
+    displayName: Stage 3
+    mode: 0
+    order: 3
+    thumbnail: {fileID: 21300000, guid: da24a4e85ae04f3683177671a31a115f, type: 3}
+    description: 
+  - id: stage-4
+    displayName: Stage 4
+    mode: 0
+    order: 4
+    thumbnail: {fileID: 21300000, guid: 187fc49086f449709f2a0ffb4438a1e9, type: 3}
+    description: 
+  - id: stage-5
+    displayName: Stage 5
+    mode: 0
+    order: 5
+    thumbnail: {fileID: 21300000, guid: 001d1e2d562e4872bc776911165ba673, type: 3}
+    description: 
+  - id: stage-6
+    displayName: Stage 6
+    mode: 0
+    order: 6
+    thumbnail: {fileID: 21300000, guid: 2287f08868eb45e480a6dc02924d2178, type: 3}
+    description: 
+  - id: stage-7
+    displayName: Stage 7
+    mode: 0
+    order: 7
+    thumbnail: {fileID: 21300000, guid: 0f6b9280e80a4b53b3ddf13c2ce04b4f, type: 3}
+    description: 
+  - id: stage-8
+    displayName: Stage 8
+    mode: 0
+    order: 8
+    thumbnail: {fileID: 21300000, guid: 6f47a51ab1304d9fb45ad19363a84c72, type: 3}
+    description: 
+  - id: stage-9
+    displayName: Stage 9
+    mode: 0
+    order: 9
+    thumbnail: {fileID: 21300000, guid: d4c109ff7cd147c7bd02a8cc1a56c1e2, type: 3}
+    description: 
+  - id: pvp-arena-1
+    displayName: PVP Arena 1
+    mode: 1
+    order: 1
+    thumbnail: {fileID: 21300000, guid: 2e337018be1747ad98d9ff4f6a74e1ad, type: 3}
+    description: 
+  - id: pvp-arena-2
+    displayName: PVP Arena 2
+    mode: 1
+    order: 2
+    thumbnail: {fileID: 21300000, guid: b649f36ff0534be1840f293d093dac82, type: 3}
+    description: 
+  - id: pvp-arena-3
+    displayName: PVP Arena 3
+    mode: 1
+    order: 3
+    thumbnail: {fileID: 21300000, guid: 7be23d7bc86c4b2a88ade92a2b92d174, type: 3}
+    description: 

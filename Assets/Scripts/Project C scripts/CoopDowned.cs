@@ -421,6 +421,10 @@ public class CoopDowned : MonoBehaviour
             return;
         }
 
+        // PVP: a knocked-out player stays down until the round is over. Nobody revives them (the other player is the enemy)
+        // and they can't give up and respawn mid-round. PvpMatch ends the round and reloads the stage.
+        if (PvpMode.Enabled) return;
+
         if (FloorController.BlocksInput) return;
 
         // ---- someone standing over them, holding Attack

@@ -389,6 +389,9 @@ public class SwordController : MonoBehaviour
     private readonly Collider2D[] overlapBuffer = new Collider2D[32];
     private readonly Collider2D[] chainBuffer = new Collider2D[32];
     private readonly HashSet<FoeController> hitFoes = new HashSet<FoeController>();
+    // PVP: the players already hit by this swing / spin (each player is hit at most once per swing, like foes), and their solid colliders.
+    private readonly HashSet<CoopHealth> hitPlayers = new HashSet<CoopHealth>();
+    private readonly Dictionary<CoopHealth, Collider2D> pvpColliders = new Dictionary<CoopHealth, Collider2D>();
 
     // The arc being swept right now, so a breakable can ask "is this point under the blade?" (see PointInSweep).
     private Vector2 sweepOrigin;
@@ -873,6 +876,7 @@ public class SwordController : MonoBehaviour
         swingTimer = 0f;
         previousAngle = facingAngle + s.arc * 0.5f * sweepSign;
         hitFoes.Clear();
+        hitPlayers.Clear();
         bladeHitCount = 0;
         swinging = true;
 
@@ -922,6 +926,7 @@ public class SwordController : MonoBehaviour
         swingTimer = 0f;
         previousAngle = facingAngle;   // starts where the player is facing and turns clockwise
         hitFoes.Clear();
+        hitPlayers.Clear();
         bladeHitCount = 0;
         spinning = true;
 
@@ -1015,6 +1020,62 @@ public class SwordController : MonoBehaviour
             bladeHitCount++;
             BladeHit(foe, s, toFoe, spin);
         }
+
+        // PVP: with PvpMode on, the same blade also hurts the OTHER player. Off = players can never hurt each other.
+        if (PvpMode.Enabled) HitPlayersSweep(s, origin, fromAngle, span, spin);
+    }
+
+    // PVP. Same reach, same arc, same crit rules as for foes. The damage goes through CoopHealth.ApplyDamage, so Invincible, Grace
+    // (the safe moment after a revive) and a jump in the air still protect the victim. Damage is scaled by PvpMode.DamageScale.
+    private void HitPlayersSweep(SwordStats s, Vector2 origin, float fromAngle, float span, bool spin)
+    {
+        for (int i = 0; i < CoopHealth.Players.Count; i++)
+        {
+            CoopHealth other = CoopHealth.Players[i];
+            if (other == null || !other.IsAlive || hitPlayers.Contains(other)) continue;
+            if (!PvpMode.CanHurt(PlayerNumber, other.PlayerNumber)) continue;
+            if (!spin && s.maxTargets > 0 && bladeHitCount >= s.maxTargets) continue;
+
+            Collider2D body = PvpColliderOf(other);
+            Vector2 center = body != null ? (Vector2)body.bounds.center : (Vector2)other.transform.position;
+            Vector2 nearest = body != null ? body.ClosestPoint(origin) : center;
+            if (Vector2.Distance(origin, nearest) > activeReach) continue;
+
+            Vector2 toPlayer = center - origin;
+            if (toPlayer.sqrMagnitude > 0.0001f)
+            {
+                float angle = Mathf.Atan2(toPlayer.y, toPlayer.x) * Mathf.Rad2Deg;
+                if (!AngleInSweep(angle, fromAngle, span, AngleSlack + WidthSlack(toPlayer.magnitude))) continue;
+            }
+
+            hitPlayers.Add(other);
+            bladeHitCount++;
+
+            float baseDamage = s.damage * (spin ? s.spinDamageMultiplier : 1f);
+            bool crit = Random.value < s.critChance;
+            float damage = (crit ? baseDamage * s.critMultiplier : baseDamage) * PvpMode.DamageScale;
+
+            other.ApplyDamage(damage);
+            if (crit) PlayCritSound();
+        }
+    }
+
+    // The player's solid (non-trigger) collider, found once and remembered.
+    private Collider2D PvpColliderOf(CoopHealth player)
+    {
+        Collider2D found;
+        if (pvpColliders.TryGetValue(player, out found) && found != null) return found;
+
+        Collider2D[] all = player.GetComponentsInChildren<Collider2D>();
+        found = null;
+        for (int i = 0; i < all.Length; i++)
+        {
+            if (all[i] != null && all[i].enabled && !all[i].isTrigger) { found = all[i]; break; }
+        }
+        if (found == null && all.Length > 0) found = all[0];
+
+        pvpColliders[player] = found;
+        return found;
     }
 
     // Extra degrees of leeway for a thick blade: a blade with half-thickness w covers atan(w / distance) either side of its middle line.

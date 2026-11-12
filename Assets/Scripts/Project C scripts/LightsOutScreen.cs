@@ -424,6 +424,17 @@ public class LightsOutScreen : MonoBehaviour
         return -1;
     }
 
+    /// <summary>
+    /// Sets where Retry puts this player back. StageLauncher calls it after it has moved the players to the stage that was picked
+    /// in the menu, so Retry goes back to THAT stage's start and not to wherever the scene happened to begin.
+    /// </summary>
+    public void SetStartPosition(int playerNumber, Vector2 position)
+    {
+        if (playerNumber < 1 || playerNumber > MaxPlayers) return;
+        _startPositions[playerNumber] = position;
+        _hasStart[playerNumber] = true;
+    }
+
     // Remembers where each player stood the first time we saw them. Not while a floor change is moving them around.
     private void RecordStartPositions()
     {
@@ -538,6 +549,7 @@ public class LightsOutScreen : MonoBehaviour
         }
         else if (index == 1)
         {
+            StageSelection.ReturnToStageSelect = true;   // the main menu opens straight on its stage list
             if (!LeaveTo(levelSelectSceneName, "LevelSelect", "Level Select")) _menuReady = true;
         }
         else
