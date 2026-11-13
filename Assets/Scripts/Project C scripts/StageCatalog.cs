@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// The list of stages the MAIN MENU shows. The menu scene can't see the Puzzle scene's objects, so this small asset
-/// (Assets/Resources/StageCatalog.asset) carries the list across.
+/// The list of stages the LEVEL SELECT scene shows (the main menu only shows how many there are). Those scenes can't see the
+/// Puzzle scene's objects, so this small asset (Assets/Resources/StageCatalog.asset) carries the list across.
 ///
 /// YOU NEVER EDIT THIS BY HAND. It is rebuilt from the StageDefinition objects in the Puzzle scene every time you SAVE that scene
 /// (see StageCatalogSync in the Editor folder), or from the menu  Tools > Stages > Rebuild Stage Catalog From Open Scene.

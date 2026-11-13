@@ -223,15 +223,13 @@ public class PauseController : MonoBehaviour
 
     private string FindMenuScene()
     {
-        string[] candidates = { mainMenuSceneName, "MainMenu", "Main Menu" };
-        for (int i = 0; i < candidates.Length; i++)
+        // Exact names first, then ignoring capitals / spaces, so "MainMenu" finds a scene that is really called "Mainmenu".
+        string scene = StageUi.ResolveScene(mainMenuSceneName, "Mainmenu", "MainMenu", "Main Menu");
+        if (scene != null && scene != mainMenuSceneName)
         {
-            if (string.IsNullOrEmpty(candidates[i]) || !Application.CanStreamedLevelBeLoaded(candidates[i])) continue;
-
-            if (i > 0) Debug.LogWarning("PauseController: '" + mainMenuSceneName + "' isn't in the build, so '" + candidates[i] + "' is used. Set Main Menu Scene Name to match.", this);
-            return candidates[i];
+            Debug.LogWarning("PauseController: '" + mainMenuSceneName + "' isn't in the build, so '" + scene + "' is used. Set Main Menu Scene Name to match.", this);
         }
-        return null;
+        return scene;
     }
 
     // The player is found through its movement script, like FloorController does. Only looked up when a pause is attempted.

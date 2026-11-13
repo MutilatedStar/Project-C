@@ -12,8 +12,23 @@ public static class StageSelection
     public static StageMode Mode = StageMode.Puzzle;
 
     /// <summary>
-    /// Set by the in-game "Level Select" button (LightsOutScreen) and the PVP end screen. The menu reads it once when it opens and jumps
-    /// straight to the stage list of the mode you were just playing, instead of the main page.
+    /// Which list the LEVEL SELECT SCENE opens on (Puzzle = Level Select page, Pvp = PVP Arenas page). Only meaningful when BrowseRequested is
+    /// true; whoever loads the Level Select scene calls RequestBrowse. LevelSelectController reads it once and clears BrowseRequested, so
+    /// pressing Play inside the Level Select scene by itself uses that controller's own Default Mode instead.
+    /// </summary>
+    public static StageMode BrowseMode = StageMode.Puzzle;
+    public static bool BrowseRequested;
+
+    /// <summary>Call this right before loading the Level Select scene (main menu buttons, the Lights Out screen, the PVP result screen).</summary>
+    public static void RequestBrowse(StageMode mode)
+    {
+        BrowseMode = mode;
+        BrowseRequested = true;
+    }
+
+    /// <summary>
+    /// Old way in: "when the MAIN MENU opens, jump to the stage list". Nothing in the project sets it any more (the Level Select scene is loaded
+    /// directly), but MainMenuController still honours it by forwarding to the Level Select scene, so an old caller can't get stuck.
     /// </summary>
     public static bool ReturnToStageSelect;
 
@@ -41,5 +56,7 @@ public static class StageSelection
         StageId = "";
         Mode = StageMode.Puzzle;
         ReturnToStageSelect = false;
+        BrowseMode = StageMode.Puzzle;
+        BrowseRequested = false;
     }
 }

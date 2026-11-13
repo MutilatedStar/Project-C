@@ -68,8 +68,8 @@ public class PillarRoom : MonoBehaviour
 
             if (a.Room != null && a.Room != this)
             {
-                Debug.LogError("PillarRoom '" + name + "': altar '" + a.name + "' already belongs to room '" + a.Room.name +
-                               "', so it is NOT used here. An altar can belong to one room only.", this);
+                Debug.LogWarning("PillarRoom '" + name + "': altar '" + a.name + "' already belongs to room '" + a.Room.name +
+                                 "', so it is NOT used here. An altar can belong to one room only.", this);
                 continue;
             }
 
@@ -86,8 +86,8 @@ public class PillarRoom : MonoBehaviour
 
             if (p.Room != null && p.Room != this)
             {
-                Debug.LogError("PillarRoom '" + name + "': pillar '" + p.name + "' already belongs to room '" + p.Room.name +
-                               "', so it is NOT used here. A pillar can belong to one room only.", this);
+                Debug.LogWarning("PillarRoom '" + name + "': pillar '" + p.name + "' already belongs to room '" + p.Room.name +
+                                 "', so it is NOT used here. A pillar can belong to one room only.", this);
                 continue;
             }
 
@@ -95,8 +95,7 @@ public class PillarRoom : MonoBehaviour
             ownedPillars.Add(p);
         }
 
-        if (ownedAltars.Count == 0) Debug.LogError("PillarRoom '" + name + "' has no altars, so it can never be solved. Fill in its Altars list " +
-                                                   "(or put the altars under this object and leave the list empty).", this);
+        if (ownedAltars.Count == 0) Debug.LogWarning("PillarRoom '" + name + "' has no altars, so it can never be solved. Fill in its Altars list.", this);
         if (ownedPillars.Count == 0) Debug.LogWarning("PillarRoom '" + name + "' has no pillars, so there is nothing for it to remove. Fill in its Pillars list.", this);
     }
 

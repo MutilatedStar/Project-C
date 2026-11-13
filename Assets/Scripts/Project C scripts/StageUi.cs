@@ -28,34 +28,70 @@ public static class StageUi
 
     private static Sprite _rounded;
 
+    /// <summary>Size and corner radius (pixels) of the rounded-rectangle texture. The 9-slice border of the sprite is the radius on every side.</summary>
+    public const int RoundedSize = 64;
+    public const int RoundedRadius = 20;
+
+    /// <summary>
+    /// Set ONLY by the editor tool that bakes the menu UI into a scene (MenuUiBakeTool). While it is set, Rounded returns this real sprite
+    /// asset instead of the generated one, so what is saved in the scene is a proper asset reference (a generated sprite can't be saved).
+    /// </summary>
+    public static Sprite RoundedOverride;
+
+    /// <summary>The pixels of the rounded rectangle: white, with the corners cut away in the alpha channel. The caller owns the texture.</summary>
+    public static Texture2D MakeRoundedTexture()
+    {
+        const int size = RoundedSize;
+        const int radius = RoundedRadius;
+        Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        tex.filterMode = FilterMode.Bilinear;
+
+        Color[] pixels = new Color[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float px = x + 0.5f;
+                float py = y + 0.5f;
+                float cx = Mathf.Clamp(px, radius, size - radius);
+                float cy = Mathf.Clamp(py, radius, size - radius);
+                float d = Vector2.Distance(new Vector2(px, py), new Vector2(cx, cy));
+                pixels[y * size + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(radius - d + 0.5f));
+            }
+        }
+        tex.SetPixels(pixels);
+        tex.Apply();
+        return tex;
+    }
+
+    /// <summary>A white strip whose alpha fades 1 -> 0 (opaqueOnLeft) or 0 -> 1 across its width. Tint it with the Image colour. The caller owns the texture.</summary>
+    public static Texture2D MakeFadeTexture(bool opaqueOnLeft)
+    {
+        const int width = 128;
+        Texture2D tex = new Texture2D(width, 1, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        tex.filterMode = FilterMode.Bilinear;
+        for (int x = 0; x < width; x++)
+        {
+            float k = x / (float)(width - 1);
+            tex.SetPixel(x, 0, new Color(1f, 1f, 1f, opaqueOnLeft ? 1f - k : k));
+        }
+        tex.Apply();
+        return tex;
+    }
+
     /// <summary>A white rounded rectangle you can tint. Use it with Image Type = Sliced.</summary>
     public static Sprite Rounded
     {
         get
         {
+            if (RoundedOverride != null) return RoundedOverride;
             if (_rounded != null) return _rounded;
 
-            const int size = 64;
-            const int radius = 20;
-            Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
-            tex.wrapMode = TextureWrapMode.Clamp;
-            tex.filterMode = FilterMode.Bilinear;
-
-            Color[] pixels = new Color[size * size];
-            for (int y = 0; y < size; y++)
-            {
-                for (int x = 0; x < size; x++)
-                {
-                    float px = x + 0.5f;
-                    float py = y + 0.5f;
-                    float cx = Mathf.Clamp(px, radius, size - radius);
-                    float cy = Mathf.Clamp(py, radius, size - radius);
-                    float d = Vector2.Distance(new Vector2(px, py), new Vector2(cx, cy));
-                    pixels[y * size + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(radius - d + 0.5f));
-                }
-            }
-            tex.SetPixels(pixels);
-            tex.Apply();
+            const int size = RoundedSize;
+            const int radius = RoundedRadius;
+            Texture2D tex = MakeRoundedTexture();
             tex.hideFlags = HideFlags.HideAndDontSave;
 
             _rounded = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f, 0,
@@ -212,14 +248,36 @@ public static class StageUi
 
     // ------------------------------------------------------------ scene loading
 
-    /// <summary>The first scene name that can really be loaded (is in Build Settings), or null.</summary>
+    /// <summary>
+    /// The first candidate that can really be loaded (is in Build Settings), or null. The candidates are tried exactly first; if none matches,
+    /// they are tried again ignoring upper / lower case, spaces, dashes and underscores against every scene in the build, so "MainMenu",
+    /// "Main Menu" and "Mainmenu" all find the same scene. The name returned is the scene's real name.
+    /// </summary>
     public static string ResolveScene(params string[] candidates)
     {
         for (int i = 0; i < candidates.Length; i++)
         {
             if (!string.IsNullOrEmpty(candidates[i]) && Application.CanStreamedLevelBeLoaded(candidates[i])) return candidates[i];
         }
+
+        int count = SceneManager.sceneCountInBuildSettings;
+        for (int i = 0; i < candidates.Length; i++)
+        {
+            if (string.IsNullOrEmpty(candidates[i])) continue;
+            string wanted = SceneKey(candidates[i]);
+
+            for (int s = 0; s < count; s++)
+            {
+                string sceneName = System.IO.Path.GetFileNameWithoutExtension(SceneUtility.GetScenePathByBuildIndex(s));
+                if (!string.IsNullOrEmpty(sceneName) && SceneKey(sceneName) == wanted) return sceneName;
+            }
+        }
         return null;
+    }
+
+    private static string SceneKey(string name)
+    {
+        return name.Replace(" ", "").Replace("_", "").Replace("-", "").ToLowerInvariant();
     }
 
     /// <summary>Fades the screen to black, then loads the scene. runner is any MonoBehaviour that stays alive until the load.</summary>

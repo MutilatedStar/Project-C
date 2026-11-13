@@ -9,7 +9,7 @@ using UnityEngine;
 ///
 /// Who flips it:
 ///   - StageLauncher (Puzzle scene) sets it from the stage that was picked: a stage whose Mode is Pvp turns it ON, a Puzzle stage turns it OFF.
-///   - MainMenuController turns it OFF whenever the menu opens and sets it before it loads a stage.
+///   - MainMenuController and LevelSelectController turn it OFF whenever a menu opens; LevelSelectController sets it before it loads a stage.
 ///   - You can also flip it yourself (a debug key, an Inspector button...): PvpMode.Toggle().
 ///
 /// The value survives scene loads (menu -> stage -> menu) on purpose. It is reset only when the game starts.

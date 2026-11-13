@@ -33,8 +33,10 @@ public class PvpMatch : MonoBehaviour
     [SerializeField, Min(0f)] private float startGrace = 1f;
 
     [Header("Where the buttons go")]
-    [Tooltip("Scene name of the main menu. 'Mainmenu', 'MainMenu' and 'Main Menu' are tried too.")]
+    [Tooltip("Scene name of the main menu. 'Mainmenu', 'MainMenu' and 'Main Menu' are tried too (capitals and spaces don't matter).")]
     [SerializeField] private string mainMenuScene = "MainMenu";
+    [Tooltip("Scene name of the Level Select scene (PICK ARENA opens it on the PVP arenas). 'LevelSelect' and 'Level Select' are tried too.")]
+    [SerializeField] private string levelSelectScene = "LevelSelect";
 
     private enum State { Fighting, RoundOver, MatchOver }
 
@@ -237,14 +239,23 @@ public class PvpMatch : MonoBehaviour
 
     private void LeaveToMenu(bool toArenaList)
     {
-        string scene = StageUi.ResolveScene(mainMenuScene, "MainMenu", "Mainmenu", "Main Menu");
+        string scene = null;
+
+        // PICK ARENA: straight to the Level Select scene, on its PVP arenas page.
+        if (toArenaList)
+        {
+            scene = StageUi.ResolveScene(levelSelectScene, "LevelSelect", "Level Select");
+            if (scene != null) StageSelection.RequestBrowse(StageMode.Pvp);
+            else Debug.LogWarning("PvpMatch: no Level Select scene can be loaded (add it to Build Settings, and check 'Level Select Scene'), so the main menu opens instead.", this);
+        }
+
+        if (scene == null) scene = StageUi.ResolveScene(mainMenuScene, "MainMenu", "Mainmenu", "Main Menu");
         if (scene == null)
         {
             Debug.LogWarning("PvpMatch: no main menu scene can be loaded (add it to Build Settings, and check 'Main Menu Scene').", this);
             return;
         }
 
-        StageSelection.ReturnToStageSelect = toArenaList;
         StageUi.FadeAndLoad(this, scene);
     }
 }

@@ -69,14 +69,12 @@ public class RetryButton : MonoBehaviour
 
     private string FindScene()
     {
-        string[] candidates = { sceneToLoad, "MainMenu", "Main Menu" };
-        for (int i = 0; i < candidates.Length; i++)
+        // Exact names first, then ignoring capitals / spaces, so "MainMenu" finds a scene that is really called "Mainmenu".
+        string scene = StageUi.ResolveScene(sceneToLoad, "Mainmenu", "MainMenu", "Main Menu");
+        if (scene != null && scene != sceneToLoad)
         {
-            if (string.IsNullOrEmpty(candidates[i]) || !Application.CanStreamedLevelBeLoaded(candidates[i])) continue;
-
-            if (i > 0) Debug.LogWarning("RetryButton: '" + sceneToLoad + "' isn't in the build, so '" + candidates[i] + "' is used. Set Scene To Load to match.", this);
-            return candidates[i];
+            Debug.LogWarning("RetryButton: '" + sceneToLoad + "' isn't in the build, so '" + scene + "' is used. Set Scene To Load to match.", this);
         }
-        return null;
+        return scene;
     }
 }

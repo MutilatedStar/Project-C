@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -22,11 +23,27 @@ using UnityEngine.InputSystem.Controls;
 ///      A CONTROLLER works too: D-pad or left stick up / down to choose, South (A on Xbox, Cross on PlayStation) to pick. ANY connected
 ///      controller can drive the menu, not only the one a player was using, because every player's input is locked while this screen is up.
 ///
-///   Retry          behind the black screen every player that counts is back on full health, put back on THEIR spot for the floor
-///                  they are on (FloorController's Floors list, element 0 = floor 1), and that floor's foes start over. Then the
-///                  screen fades out. On the FIRST floor (room 0) they go back to where they spawned when the scene started.
+///   Retry          behind the black screen every player that counts is back on full health (anybody knocked down or blown up
+///                  by CoopDowned stands up again), put back on THEIR spot for the floor they are on (FloorController's Floors
+///                  list, element 0 = floor 1), and that floor's foes start over. Then the screen fades out. On the FIRST floor
+///                  (room 0) they go back to where they spawned when the scene started. Every score goes back to 0 as well
+///                  (Reset Score On Retry).
 ///   Level Select   resets the run (GameReset.ResetRun, the same as the pause menu's Quit) and loads the Level Select scene.
 ///   Menu           resets the run and loads the Main Menu scene.
+///
+/// SOUND (everything follows the Sound On/Off setting and keeps playing while the game is frozen). Every level is its own slider:
+///   Lights Out Clip     plays the moment the last player goes down (Lights Out Sound Delay starts it later). Loop Lights Out Sound repeats it
+///                       until the menu is left.
+///   Random Sounds       a list of extra sounds picked at random while the screen is up, again and again if Repeat Random Sounds is on. Each has
+///                       its own Volume and its own Likelihood (a bigger number is picked more often; 0 = never), and the Chance Per Turn decides
+///                       whether a turn plays anything at all.
+///   Select Clip         plays each time the highlighted button changes (keys, controller or mouse). The "toggle" sound.
+///   Menu Switch Clip    plays when Level Select or Menu is picked (the scene waits for it, up to Menu Switch Max Wait seconds).
+///   Fade Out            picking Retry, Level Select or Menu fades the Lights Out sounds away over Lights Out Fade Out Time and stops the
+///                       random ones from starting again, so none of it is heard once the menu is gone.
+///   Silence             while the screen is up the music is faded out and held (MusicManager and MusicPlayer, without touching the player's
+///                       Music On/Off setting) and looping sounds from other objects are paused, so only the Lights Out sounds are heard. All of
+///                       it comes back on Retry (or when the screen is gone).
 ///
 /// While it is up: players are locked, foes are frozen, Time.timeScale is 0, hazards and doors do nothing, pausing is switched off, and the
 /// mouse cursor is freed. All of that is put back when the screen is gone.
@@ -46,13 +63,86 @@ public class LightsOutScreen : MonoBehaviour
     private const int MaxPlayers = 4;
     private const int ButtonCount = 3;
 
+    /// <summary>One entry of the Random Sounds list.</summary>
+    [System.Serializable]
+    public class RandomSound
+    {
+        [Tooltip("The sound.")]
+        public AudioClip clip;
+        [Tooltip("This sound's own level. It is separate from every other sound's level.")]
+        [Range(0f, 1f)] public float volume = 1f;
+        [Tooltip("How likely this sound is to be the one picked, compared with the others in the list: 2 is twice as likely as 1, " +
+                 "0.5 half as likely, 0 = never. (A list of 3, 1 and 1 picks the first one 3 times out of 5.)")]
+        [Min(0f)] public float likelihood = 1f;
+    }
+
     // ------------------------------------------------------------ inspector
 
     [Header("Scenes")]
-    [Tooltip("Exact name of the Level Select scene (must be in Scenes In Build). \"LevelSelect\" and \"Level Select\" are tried if this can't be loaded.")]
+    [Tooltip("Name of the Level Select scene (must be in Scenes In Build). Capitals and spaces don't matter, and \"LevelSelect\" / \"Level Select\" are tried if this can't be found.")]
     [SerializeField] private string levelSelectSceneName = "LevelSelect";
-    [Tooltip("Exact name of the Main Menu scene (must be in Scenes In Build). \"MainMenu\" and \"Main Menu\" are tried if this can't be loaded.")]
-    [SerializeField] private string mainMenuSceneName = "MainMenu";
+    [Tooltip("Name of the Main Menu scene (must be in Scenes In Build). Capitals and spaces don't matter, so \"Mainmenu\", \"MainMenu\" and \"Main Menu\" all find the same scene.")]
+    [SerializeField] private string mainMenuSceneName = "Mainmenu";
+
+    [Header("Lights Out sound (optional, follows the Sound On/Off setting)")]
+    [Tooltip("Plays when the lights go out: the moment the last player goes down. Drag your clip in here; leave it empty for silence.")]
+    [SerializeField] private AudioClip lightsOutClip;
+    [Tooltip("This sound's own level.")]
+    [SerializeField, Range(0f, 1f)] private float lightsOutVolume = 1f;
+    [Tooltip("Seconds (real time) after the last player goes down before the clip starts. 0 = the instant they are all down. " +
+             "Set it to the same number as Delay Before Fade (below) to start the clip just as the screen begins to go dark.")]
+    [SerializeField, Min(0f)] private float lightsOutSoundDelay = 0f;
+    [Tooltip("ON: the clip repeats (with no gap) until Retry, Level Select or Menu is picked. OFF: it plays once.")]
+    [SerializeField] private bool loopLightsOutSound = false;
+    [Tooltip("Seconds the Lights Out sounds (this clip, its loop and the random sounds) take to fade away once Retry, Level Select or Menu is " +
+             "picked, so none of it plays after the menu is gone. 0 = cut off at once.")]
+    [SerializeField, Min(0f)] private float lightsOutFadeOutTime = 1f;
+
+    [Header("Random sounds (optional, they play on top of the Lights Out sound)")]
+    [Tooltip("Sounds picked at random while the screen is up. Each one has its own Volume and its own Likelihood. Leave the list empty for none.")]
+    [SerializeField] private RandomSound[] randomSounds = new RandomSound[0];
+    [Tooltip("ON: picks a random sound again and again, with Interval Min / Max seconds between turns, until the menu is left. OFF: one turn only.")]
+    [SerializeField] private bool repeatRandomSounds = true;
+    [Tooltip("Seconds (real time) after the last player goes down before the first turn.")]
+    [SerializeField, Min(0f)] private float randomSoundDelay = 2f;
+    [Tooltip("Shortest wait, in seconds (real time), between one turn and the next.")]
+    [SerializeField, Min(0f)] private float randomIntervalMin = 3f;
+    [Tooltip("Longest wait, in seconds (real time), between one turn and the next.")]
+    [SerializeField, Min(0f)] private float randomIntervalMax = 8f;
+    [Tooltip("The chance that a turn plays anything at all: 1 = every turn plays a sound, 0.5 = every other turn on average, 0 = never. " +
+             "The Likelihood of each sound decides WHICH one plays; this decides WHETHER one does.")]
+    [SerializeField, Range(0f, 1f)] private float randomChancePerTurn = 1f;
+    [Tooltip("ON: the same sound is not picked twice in a row (when the list has two or more usable sounds).")]
+    [SerializeField] private bool avoidRepeatingRandomSound = true;
+
+    [Header("Menu sounds (optional, follow the Sound On/Off setting)")]
+    [Tooltip("Plays every time the highlighted button changes (W / S, up / down, controller or mouse). The toggle sound.")]
+    [SerializeField] private AudioClip selectClip;
+    [Tooltip("The toggle sound's own level.")]
+    [SerializeField, Range(0f, 1f)] private float selectVolume = 1f;
+    [Tooltip("Plays when Level Select or Menu is picked, as the screen goes from this menu to another one.")]
+    [SerializeField] private AudioClip menuSwitchClip;
+    [Tooltip("The between-menus sound's own level.")]
+    [SerializeField, Range(0f, 1f)] private float menuSwitchVolume = 1f;
+    [Tooltip("The next scene waits for the between-menus sound to finish, but never longer than this many seconds (real time), so it is not cut off by the loading.")]
+    [SerializeField, Min(0f)] private float menuSwitchMaxWait = 1.5f;
+
+    [Header("Silence everything else while the screen is up")]
+    [Tooltip("ON: the music (MusicManager and MusicPlayer) fades out when the last player goes down and stays off while the screen is up, so only the Lights Out sounds are heard. " +
+             "The player's Music On/Off setting is not changed, and the music comes back on Retry.")]
+    [SerializeField] private bool silenceMusic = true;
+    [Tooltip("Seconds the music takes to fade out when the last player goes down.")]
+    [SerializeField, Min(0f)] private float musicFadeOutTime = 0.75f;
+    [Tooltip("Seconds the music takes to fade back in after Retry (MusicManager only; MusicPlayer comes back at once).")]
+    [SerializeField, Min(0f)] private float musicFadeInTime = 1.5f;
+    [Tooltip("ON: any other sound that is looping (a campfire, an ambience track...) is paused while the screen is up and carries on after Retry. " +
+             "One-shot sounds (hits, footsteps) are left to finish.")]
+    [SerializeField] private bool silenceOtherLoops = true;
+
+    [Header("Score")]
+    [Tooltip("ON: Retry sets every score back to 0 (each player's score and the Shop money), because the whole team went down. " +
+             "Level Select and Menu always reset the run.")]
+    [SerializeField] private bool resetScoreOnRetry = true;
 
     [Header("Keys")]
     [SerializeField] private KeyCode[] upKeys = { KeyCode.W, KeyCode.UpArrow };
@@ -111,16 +201,12 @@ public class LightsOutScreen : MonoBehaviour
     /// <summary>True from the moment the team is wiped until the screen is gone again (or the next scene is loading).</summary>
     public static bool IsActive { get; private set; }
 
-    /// <summary>
-    /// True while at least one LightsOutScreen is switched on in the scene. CoopDowned reads it: with a screen present, blown-up
-    /// players wait for it when the whole team is down; with none, there is nothing to take over, so the team respawns by itself.
-    /// </summary>
-    public static bool Available { get { return _enabledCount > 0; } }
-
-    private static int _enabledCount;
-
     /// <summary>True while the screen is up, and for the rest of the frame in which it closed (so the key that picked Retry can't also move a player).</summary>
     public static bool BlocksInput => IsActive || closedFrame == Time.frameCount;
+
+    /// <summary>True while a LightsOutScreen is switched on in the scene. CoopDowned reads it: with no game-over screen to take over, a team that is
+    /// all down simply respawns instead of waiting for a screen that will never come.</summary>
+    public static bool Available { get; private set; }
 
     private static int closedFrame = -1;
 
@@ -129,8 +215,8 @@ public class LightsOutScreen : MonoBehaviour
     private static void ResetStatics()
     {
         IsActive = false;
+        Available = false;
         closedFrame = -1;
-        _enabledCount = 0;
     }
 
     // ------------------------------------------------------------ state
@@ -168,6 +254,27 @@ public class LightsOutScreen : MonoBehaviour
 
     private FloorController _floorController;
     private bool _warnedNoSpot;
+    private AudioSource _audio;         // the Lights Out clip (plays once, or loops)
+    private AudioSource _randomAudio;   // the random sounds
+    private AudioSource _uiAudio;       // the menu sounds (toggle, between menus): never faded
+    private float _fade = 1f;           // 1 = full, 0 = faded out. Multiplies the Lights Out sounds (not the menu sounds)
+    private bool _soundsStopped;        // Retry / Level Select / Menu was picked: nothing new may start
+    private bool _ambienceFading;       // the fade-out is running
+    private Coroutine _mainRoutine;
+    private Coroutine _randomRoutine;
+    private Coroutine _fadeRoutine;
+    private Coroutine _loopSweepRoutine;
+    private int _lastRandomSound = -1;
+
+    private bool _otherAudioHeld;       // the music and other loops are being kept quiet
+    private MusicManager _heldMusicManager;
+    private MusicPlayer _heldMusicPlayer;
+    private readonly List<AudioSource> _pausedLoops = new List<AudioSource>();
+
+    private float _wipeSeenSince = -1f;   // when every player was first seen at 0 health without the screen starting (PollTeamWipe)
+
+    private const float PollWaitSeconds = 0.4f;       // how long "everybody is at 0 health" must last before the safety net starts the screen
+    private const float MaxFloorChangeWait = 3f;      // the longest the screen waits for a running floor change
 
     // ------------------------------------------------------------ lifecycle
 
@@ -175,18 +282,19 @@ public class LightsOutScreen : MonoBehaviour
     {
         IsActive = false;
         BuildUi();
+        BuildAudio();
         _root.SetActive(false);
     }
 
     private void OnEnable()
     {
-        _enabledCount++;
+        Available = true;
         CoopHealth.TeamWiped += HandleTeamWiped;
     }
 
     private void OnDisable()
     {
-        _enabledCount = Mathf.Max(0, _enabledCount - 1);
+        Available = false;
         CoopHealth.TeamWiped -= HandleTeamWiped;
     }
 
@@ -200,9 +308,307 @@ public class LightsOutScreen : MonoBehaviour
     {
         if (IsActive) return;
 
+        if (_root == null)
+        {
+            Debug.LogError("LightsOutScreen: the team is wiped but the screen's UI was never built (check the Console for an error from Awake, " +
+                           "usually TextMeshPro's essential resources not being imported).", this);
+            return;
+        }
+
         IsActive = true;       // from this moment the players hold still and the doors and hazards do nothing
+        _wipeSeenSince = -1f;
+        Debug.Log("LightsOutScreen: every player is down, so the game-over screen is starting.", this);
+
         LockPlayers(true);
+        StartLightsOutAudio();   // music off, the Lights Out sound and the random sounds on
         StartCoroutine(ShowRoutine());
+    }
+
+    // Safety net that does not depend on any event or on any player's script: if every player that counts has been at 0 health for a
+    // moment and the screen has not started, start it. (The normal way in is CoopHealth.TeamWiped, which fires the instant the last
+    // player's health reaches 0.) The short wait stops a one-frame glitch, such as a scene loading, from showing the screen.
+    private void PollTeamWipe()
+    {
+        if (!CoopHealth.AllCountedDead || closedFrame == Time.frameCount)
+        {
+            _wipeSeenSince = -1f;
+            return;
+        }
+
+        if (_wipeSeenSince < 0f) _wipeSeenSince = Time.unscaledTime;
+        if (Time.unscaledTime - _wipeSeenSince < PollWaitSeconds) return;
+
+        Debug.LogWarning("LightsOutScreen: every player is at 0 health but TeamWiped was never raised, so the screen was started from here instead.", this);
+        HandleTeamWiped();
+    }
+
+    // ------------------------------------------------------------ sound
+
+    // Three 2D sources, each on its own child object, so both split-screen players hear them, they keep playing while Time.timeScale is 0,
+    // and no other AudioSource on this object is touched. Keeping them apart is what keeps every level separate and lets the Lights Out
+    // sounds fade away without fading the menu sounds.
+    private void BuildAudio()
+    {
+        _audio = NewSource("LightsOutSound");
+        _randomAudio = NewSource("LightsOutRandomSounds");
+        _uiAudio = NewSource("LightsOutMenuSounds");
+    }
+
+    private AudioSource NewSource(string objectName)
+    {
+        var go = new GameObject(objectName);
+        go.transform.SetParent(transform, false);
+
+        AudioSource source = go.AddComponent<AudioSource>();
+        source.playOnAwake = false;
+        source.loop = false;
+        source.spatialBlend = 0f;
+        source.ignoreListenerPause = true;
+        return source;
+    }
+
+    // The moment the last player goes down: the music goes quiet, and the Lights Out sound and the random sounds start.
+    private void StartLightsOutAudio()
+    {
+        // A clean start, so a second Lights Out in the same scene (after a Retry) behaves like the first.
+        StopSoundRoutines();
+        if (_fadeRoutine != null) { StopCoroutine(_fadeRoutine); _fadeRoutine = null; }
+        _ambienceFading = false;
+        _soundsStopped = false;
+        _fade = 1f;
+        _lastRandomSound = -1;
+        StopLightsOutSources();
+        ApplyLightsOutVolume();
+
+        HoldOtherAudio();
+
+        if (lightsOutClip != null) _mainRoutine = StartCoroutine(PlayLightsOutSound());
+        if (HasRandomSounds()) _randomRoutine = StartCoroutine(RandomSoundsRoutine());
+    }
+
+    // The Lights Out sounds' levels: the first sound's own volume, times the fade. (Each random sound's own volume is applied when it plays.)
+    private void ApplyLightsOutVolume()
+    {
+        if (_audio != null) _audio.volume = lightsOutVolume * _fade;
+        if (_randomAudio != null) _randomAudio.volume = _fade;
+    }
+
+    private void StopLightsOutSources()
+    {
+        if (_audio != null) { _audio.Stop(); _audio.clip = null; _audio.loop = false; }
+        if (_randomAudio != null) _randomAudio.Stop();
+    }
+
+    private void StopSoundRoutines()
+    {
+        if (_mainRoutine != null) { StopCoroutine(_mainRoutine); _mainRoutine = null; }
+        if (_randomRoutine != null) { StopCoroutine(_randomRoutine); _randomRoutine = null; }
+    }
+
+    private IEnumerator PlayLightsOutSound()
+    {
+        if (lightsOutSoundDelay > 0f) yield return new WaitForSecondsRealtime(lightsOutSoundDelay);
+        _mainRoutine = null;
+        if (_soundsStopped || _audio == null || lightsOutClip == null || !GameSettings.SoundOn) yield break;
+
+        ApplyLightsOutVolume();
+        if (loopLightsOutSound)
+        {
+            _audio.clip = lightsOutClip;
+            _audio.loop = true;
+            _audio.Play();
+        }
+        else
+        {
+            _audio.loop = false;
+            _audio.PlayOneShot(lightsOutClip, 1f);   // the level is the source's volume (above), so the fade-out reaches it too
+        }
+    }
+
+    // ---- random sounds
+
+    private static bool IsUsable(RandomSound sound)
+    {
+        return sound != null && sound.clip != null && sound.likelihood > 0f;
+    }
+
+    private bool HasRandomSounds()
+    {
+        if (randomSounds == null) return false;
+        for (int i = 0; i < randomSounds.Length; i++)
+        {
+            if (IsUsable(randomSounds[i])) return true;
+        }
+        return false;
+    }
+
+    private IEnumerator RandomSoundsRoutine()
+    {
+        if (randomSoundDelay > 0f) yield return new WaitForSecondsRealtime(randomSoundDelay);
+
+        while (!_soundsStopped)
+        {
+            if (GameSettings.SoundOn && randomChancePerTurn > 0f && Random.value <= randomChancePerTurn) PlayRandomSound();
+            if (!repeatRandomSounds) break;
+
+            float low = Mathf.Min(randomIntervalMin, randomIntervalMax);
+            float high = Mathf.Max(randomIntervalMin, randomIntervalMax);
+            yield return new WaitForSecondsRealtime(Mathf.Max(0.1f, Random.Range(low, high)));
+        }
+
+        _randomRoutine = null;
+    }
+
+    private void PlayRandomSound()
+    {
+        int index = PickRandomSound();
+        if (index < 0 || _randomAudio == null) return;
+
+        _lastRandomSound = index;
+        RandomSound pick = randomSounds[index];
+        _randomAudio.PlayOneShot(pick.clip, pick.volume);   // its own level; the source's volume is only the fade
+    }
+
+    // A weighted pick: each usable sound's chance is its Likelihood divided by the total of all of them.
+    private int PickRandomSound()
+    {
+        int usable = 0;
+        for (int i = 0; i < randomSounds.Length; i++)
+        {
+            if (IsUsable(randomSounds[i])) usable++;
+        }
+        if (usable == 0) return -1;
+
+        bool skipLast = avoidRepeatingRandomSound && usable > 1;
+
+        float total = 0f;
+        for (int i = 0; i < randomSounds.Length; i++)
+        {
+            if (IsUsable(randomSounds[i]) && !(skipLast && i == _lastRandomSound)) total += randomSounds[i].likelihood;
+        }
+
+        float roll = Random.value * total;
+        int fallback = -1;
+        for (int i = 0; i < randomSounds.Length; i++)
+        {
+            if (!IsUsable(randomSounds[i]) || (skipLast && i == _lastRandomSound)) continue;
+
+            fallback = i;
+            roll -= randomSounds[i].likelihood;
+            if (roll <= 0f) return i;
+        }
+        return fallback;   // only reached by rounding
+    }
+
+    // ---- fading out
+
+    // Retry, Level Select or Menu was picked: nothing new may start, and what is playing fades away over Lights Out Fade Out Time.
+    private void FadeOutLightsOutSound()
+    {
+        _soundsStopped = true;
+        StopSoundRoutines();
+
+        if (_fadeRoutine != null) StopCoroutine(_fadeRoutine);
+        _fadeRoutine = StartCoroutine(FadeOutRoutine());
+    }
+
+    private IEnumerator FadeOutRoutine()
+    {
+        _ambienceFading = true;
+
+        float from = _fade;
+        for (float t = 0f; t < lightsOutFadeOutTime; t += Time.unscaledDeltaTime)
+        {
+            _fade = Mathf.Lerp(from, 0f, t / lightsOutFadeOutTime);
+            ApplyLightsOutVolume();
+            yield return null;
+        }
+
+        _fade = 0f;
+        StopLightsOutSources();   // fully silent now, so cut whatever is left
+        ApplyLightsOutVolume();
+
+        _ambienceFading = false;
+        _fadeRoutine = null;
+    }
+
+    // ---- menu sounds
+
+    // The toggle sound: the highlighted button changed.
+    private void PlaySelectSound()
+    {
+        if (selectClip == null || _uiAudio == null || !GameSettings.SoundOn) return;
+        _uiAudio.PlayOneShot(selectClip, selectVolume);
+    }
+
+    // The between-menus sound. Returns how long the scene should wait before loading, so loading doesn't cut the sound off.
+    private float PlayMenuSwitchSound()
+    {
+        if (menuSwitchClip == null || _uiAudio == null || !GameSettings.SoundOn) return 0f;
+
+        _uiAudio.PlayOneShot(menuSwitchClip, menuSwitchVolume);
+        return Mathf.Min(menuSwitchClip.length, menuSwitchMaxWait);
+    }
+
+    // ---- keeping everything else quiet
+
+    private void HoldOtherAudio()
+    {
+        if (_otherAudioHeld) return;
+        _otherAudioHeld = true;
+
+        if (silenceMusic)
+        {
+            _heldMusicManager = MusicManager.Instance;
+            if (_heldMusicManager != null) _heldMusicManager.Hold(musicFadeOutTime);
+
+            _heldMusicPlayer = MusicPlayer.Instance;
+            if (_heldMusicPlayer != null) _heldMusicPlayer.Hold(musicFadeOutTime);
+        }
+
+        if (silenceOtherLoops) _loopSweepRoutine = StartCoroutine(SilenceLoopsRoutine());
+    }
+
+    // Puts the music and the paused loops back. Safe to call twice.
+    private void ResumeOtherAudio()
+    {
+        if (!_otherAudioHeld) return;
+        _otherAudioHeld = false;
+
+        if (_loopSweepRoutine != null) { StopCoroutine(_loopSweepRoutine); _loopSweepRoutine = null; }
+
+        for (int i = 0; i < _pausedLoops.Count; i++)
+        {
+            if (_pausedLoops[i] != null) _pausedLoops[i].UnPause();
+        }
+        _pausedLoops.Clear();
+
+        if (_heldMusicManager != null) _heldMusicManager.Release(musicFadeInTime);
+        if (_heldMusicPlayer != null) _heldMusicPlayer.Release();
+        _heldMusicManager = null;
+        _heldMusicPlayer = null;
+    }
+
+    // Pauses every looping sound that isn't ours or a music player's, and looks again a few times a second for ones that start later.
+    // One-shots (hits, footsteps) are left alone: they finish by themselves, and pausing them would replay their tails after the Retry.
+    private IEnumerator SilenceLoopsRoutine()
+    {
+        while (true)
+        {
+            AudioSource[] all = FindObjectsByType<AudioSource>(FindObjectsSortMode.None);
+            for (int i = 0; i < all.Length; i++)
+            {
+                AudioSource source = all[i];
+                if (source == null || !source.isPlaying || !source.loop) continue;
+                if (source.transform.IsChildOf(transform)) continue;   // this screen's own sounds
+                if (source.GetComponent<MusicManager>() != null || source.GetComponent<MusicPlayer>() != null) continue;   // those go through Hold
+
+                source.Pause();
+                _pausedLoops.Add(source);
+            }
+
+            yield return new WaitForSecondsRealtime(0.25f);
+        }
     }
 
     // ------------------------------------------------------------ main loop
@@ -212,6 +618,7 @@ public class LightsOutScreen : MonoBehaviour
         if (!IsActive)
         {
             RecordStartPositions();
+            PollTeamWipe();
             return;
         }
         if (!_menuReady) return;
@@ -374,24 +781,22 @@ public class LightsOutScreen : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Sets where a player goes back to on Retry (floor / room 0), replacing whatever was recorded automatically.
-    /// StageLauncher calls this after it moves the players to the stage's spawn points, so a Retry puts them at THIS
-    /// stage's start instead of the spot they happened to stand on when the scene opened.
-    /// </summary>
-    public void SetStartPosition(int playerNumber, Vector2 position)
-    {
-        if (playerNumber < 1 || playerNumber > MaxPlayers) return;
-        _startPositions[playerNumber] = position;
-        _hasStart[playerNumber] = true;
-    }
-
     // ------------------------------------------------------------ showing the screen
 
     private IEnumerator ShowRoutine()
     {
-        // A floor change that is mid-way finishes first (a hit can land just as the doors close).
-        while (FloorController.IsChangingFloor) yield return null;
+        // A floor change that is mid-way finishes first (a hit can land just as the doors close). Never for more than a few seconds,
+        // so a floor change that gets stuck can't keep the game-over screen away for ever.
+        float waitedForFloor = 0f;
+        while (FloorController.IsChangingFloor && waitedForFloor < MaxFloorChangeWait)
+        {
+            waitedForFloor += Time.unscaledDeltaTime;
+            yield return null;
+        }
+        if (FloorController.IsChangingFloor)
+        {
+            Debug.LogWarning("LightsOutScreen: a floor change was still running after " + MaxFloorChangeWait + " seconds, so the screen is shown anyway.", this);
+        }
 
         // Let the last player's fall be seen before it goes dark.
         if (delayBeforeFade > 0f) yield return new WaitForSecondsRealtime(delayBeforeFade);
@@ -451,7 +856,10 @@ public class LightsOutScreen : MonoBehaviour
 
     private void SetSelected(int index)
     {
+        bool changed = index != _selected;
         _selected = index;
+        if (changed && _menuReady) PlaySelectSound();   // not while the menu is still fading in, and not once a choice has been made
+
         for (int i = 0; i < ButtonCount; i++)
         {
             bool on = i == index;
@@ -472,11 +880,13 @@ public class LightsOutScreen : MonoBehaviour
         }
         else if (index == 1)
         {
-            if (!LeaveTo(levelSelectSceneName, "LevelSelect", "Level Select")) _menuReady = true;
+            // The Level Select scene opens on the puzzle stages (the same scene also holds the PVP arenas page).
+            if (LeaveTo(levelSelectSceneName, "LevelSelect", "Level Select")) StageSelection.RequestBrowse(StageMode.Puzzle);
+            else _menuReady = true;
         }
         else
         {
-            if (!LeaveTo(mainMenuSceneName, "MainMenu", "Main Menu")) _menuReady = true;
+            if (!LeaveTo(mainMenuSceneName, "Mainmenu", "Main Menu")) _menuReady = true;
         }
     }
 
@@ -484,10 +894,14 @@ public class LightsOutScreen : MonoBehaviour
 
     private IEnumerator RetryRoutine()
     {
+        FadeOutLightsOutSound();   // the Lights Out sounds fade away while the screen goes black
         yield return Fade(_contentGroup, 1f, 0f, 0.25f);
 
         // Behind the black screen: everyone back on their feet, back on their spot, the floor's foes started over.
         ReviveTeam();
+        if (resetScoreOnRetry) GameReset.ResetScores();   // the whole team went down: every score starts over
+        CoopDowned.ResetAllForRetry();   // knocked-down / blown-up players stand up again (gray, tipped over, hidden, locked all undone)
+        LockPlayers(true);               // ...but nobody may move until the screen is clear (standing up unlocks them)
         yield return null;   // one frame for whatever listens to the health change (animations, colliders) to catch up
         PlaceTeam();
 
@@ -498,6 +912,10 @@ public class LightsOutScreen : MonoBehaviour
         ThawTime();   // physics and the camera settle while it is still black; the foes stay frozen until the screen is clear
         if (holdTime > 0f) yield return new WaitForSecondsRealtime(holdTime);
 
+        // The Lights Out sounds must be completely gone before the game is seen again (a long Fade Out Time just makes the black last longer).
+        while (_ambienceFading) yield return null;
+
+        ResumeOtherAudio();   // the music comes back as the screen clears
         yield return Fade(_blackGroup, 1f, 0f, fadeOutTime);
 
         _root.SetActive(false);
@@ -602,20 +1020,26 @@ public class LightsOutScreen : MonoBehaviour
             Debug.LogWarning("LightsOutScreen: '" + wanted + "' isn't in the build, so '" + scene + "' is used. Set the scene name to match.", this);
         }
 
-        ReleaseWorld();           // time back to normal and foes un-frozen, so the next scene doesn't start frozen
-        GameReset.ResetRun();     // score back to 0 and player health back to full, same as the pause menu's Quit
-        SceneManager.LoadScene(scene);
+        StartCoroutine(LeaveRoutine(scene));
         return true;
     }
 
+    private IEnumerator LeaveRoutine(string scene)
+    {
+        FadeOutLightsOutSound();                 // the Lights Out sounds fade away while the between-menus sound plays
+        float wait = PlayMenuSwitchSound();
+        if (wait > 0f) yield return new WaitForSecondsRealtime(wait);
+        while (_ambienceFading) yield return null;   // the fade and the menu sound run together; the scene waits for the longer one
+
+        ReleaseWorld();           // time back to normal and foes un-frozen, so the next scene doesn't start frozen (the music is given back too)
+        GameReset.ResetRun();     // score back to 0 and player health back to full, same as the pause menu's Quit
+        SceneManager.LoadScene(scene);
+    }
+
+    // Exact names first, then the same names ignoring capitals / spaces / dashes (so "MainMenu" finds a scene called "Mainmenu").
     private static string FindScene(string a, string b, string c)
     {
-        string[] candidates = { a, b, c };
-        for (int i = 0; i < candidates.Length; i++)
-        {
-            if (!string.IsNullOrEmpty(candidates[i]) && Application.CanStreamedLevelBeLoaded(candidates[i])) return candidates[i];
-        }
-        return null;
+        return StageUi.ResolveScene(a, b, c);
     }
 
     // ------------------------------------------------------------ freezing and putting everything back
@@ -654,6 +1078,7 @@ public class LightsOutScreen : MonoBehaviour
         LockPlayers(false);
         BlockPausing(false);
         RestoreCursor();
+        ResumeOtherAudio();   // music and paused loops back (does nothing if Retry already gave them back)
 
         _menuReady = false;
         IsActive = false;
