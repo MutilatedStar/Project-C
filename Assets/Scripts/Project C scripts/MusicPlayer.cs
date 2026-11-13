@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -6,6 +7,9 @@ using UnityEngine;
 // RANDOM mode (Track Mode 0): plays a random track, never the same one twice in a row.
 //   Each song slowly fades to silence over its last "Fade Out Seconds", then the next starts.
 // PICKED mode (Track Mode 1+): loops that one track ("Repeat Track"), with no fade.
+//
+// HOLD / RELEASE (used by the Lights Out screen): Hold(seconds) fades the music out and keeps it silent, Release() brings it back
+// (if the Music setting is On). The saved Music On/Off setting is never changed.
 public class MusicPlayer : MonoBehaviour
 {
     public static MusicPlayer Instance { get; private set; }
@@ -27,6 +31,8 @@ public class MusicPlayer : MonoBehaviour
     int currentTrack = -1;      // index into tracks, -1 = nothing started yet
     bool currentIsPicked;       // true = looping a chosen track, false = random mode
     bool paused;
+    bool held;                  // Hold() is in effect: silent until Release()
+    Coroutine holdFade;
     float ignoreEndUntil;       // short grace period right after Play()
 
     void Awake()
@@ -91,10 +97,50 @@ public class MusicPlayer : MonoBehaviour
         }
     }
 
+    /// <summary>True between Hold and Release.</summary>
+    public bool IsHeld { get { return held; } }
+
+    /// <summary>Fades the music out over this many seconds (real time) and keeps it silent until Release(). Safe to call twice.</summary>
+    public void Hold(float fadeSeconds)
+    {
+        if (held) return;
+        held = true;
+        paused = true; // Update() stops advancing songs and touching the volume
+
+        if (holdFade != null) { StopCoroutine(holdFade); holdFade = null; }
+        if (source != null && source.isPlaying) holdFade = StartCoroutine(FadeAndPause(fadeSeconds));
+    }
+
+    /// <summary>Ends Hold(): the music carries on from where it was if the Music setting is On.</summary>
+    public void Release()
+    {
+        if (!held) return;
+        held = false;
+
+        if (holdFade != null) { StopCoroutine(holdFade); holdFade = null; }
+        if (source != null) source.volume = volume;
+
+        ApplySettings(); // On: un-pauses (or starts a song if none was chosen yet). Off: stays paused.
+    }
+
+    IEnumerator FadeAndPause(float seconds)
+    {
+        float start = source.volume;
+        for (float t = 0f; t < seconds; t += Time.unscaledDeltaTime)
+        {
+            source.volume = Mathf.Lerp(start, 0f, t / seconds);
+            yield return null;
+        }
+        source.volume = 0f;
+        source.Pause();
+        holdFade = null;
+    }
+
     // Called at start and every time the Apply button is pressed.
     void ApplySettings()
     {
         if (Instance != this) return;
+        if (held) return; // Release() applies the settings when the hold ends
 
         if (TrackCount == 0)
         {

@@ -14,13 +14,19 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::StageCatalog
   stageScene: Puzzle
   stages:
-  - id: stage-1
-    displayName: Stage 1
+  - id: 0
+    displayName: Stage 0
     mode: 0
-    order: 1
-    thumbnail: {fileID: 21300000, guid: 71cd1e2a5c344d8f8074e8842eb3ac4b, type: 3}
+    order: 0
+    thumbnail: {fileID: 21300000, guid: da24a4e85ae04f3683177671a31a115f, type: 3}
     description: 
   - id: stage-2
+    displayName: Stage 2
+    mode: 0
+    order: 2
+    thumbnail: {fileID: 21300000, guid: 71cd1e2a5c344d8f8074e8842eb3ac4b, type: 3}
+    description: 
+  - id: stage-1
     displayName: Stage 2
     mode: 0
     order: 2
@@ -30,12 +36,6 @@ MonoBehaviour:
     displayName: Stage 3
     mode: 0
     order: 3
-    thumbnail: {fileID: 21300000, guid: da24a4e85ae04f3683177671a31a115f, type: 3}
-    description: 
-  - id: stage-4
-    displayName: Stage 4
-    mode: 0
-    order: 4
     thumbnail: {fileID: 21300000, guid: 187fc49086f449709f2a0ffb4438a1e9, type: 3}
     description: 
   - id: stage-5

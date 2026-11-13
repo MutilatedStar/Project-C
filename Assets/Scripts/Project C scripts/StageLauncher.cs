@@ -133,7 +133,7 @@ public static class StageBanner
     private static IEnumerator Routine(string title, string subtitle, Color accent, float hold)
     {
         Canvas canvas = StageUi.CreateCanvas("Stage Banner", 900);
-        UnityEngine.UI.CanvasGroup group = canvas.gameObject.AddComponent<UnityEngine.UI.CanvasGroup>();
+        CanvasGroup group = canvas.gameObject.AddComponent<CanvasGroup>();
         group.alpha = 0f;
         group.blocksRaycasts = false;
         group.interactable = false;

@@ -78,6 +78,8 @@ public class RoomAltar : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float volume = 0.8f;
 
     [Header("Debug")]
+    [Tooltip("Prints Console lines that explain why the altar hasn't triggered: when some plates are fully held and others are not (it names the missing ones), when the altar is asleep because its room's floor isn't the active one, and when it triggers.")]
+    [SerializeField] private bool logProgress = true;
     [Tooltip("Prints one Console line when something is on a plate but isn't counted because its picture is below the plate's.")]
     [SerializeField] private bool logWhyNotCounted = true;
 
@@ -96,6 +98,8 @@ public class RoomAltar : MonoBehaviour
     private Plate[] live;
     private AudioSource source;
     private bool soundOn;
+    private bool reportedAsleep;
+    private float nextProgressLog;
 
     private struct Hit
     {
@@ -133,12 +137,26 @@ public class RoomAltar : MonoBehaviour
         }
         if (list.Count == 0)
         {
+            // Only TRIGGER colliders become plates. A solid collider on the altar (its body, a wall) can never be stood in,
+            // so as a plate it would never be held and the altar could never complete.
             Collider2D[] all = GetComponentsInChildren<Collider2D>();
             for (int i = 0; i < all.Length; i++)
             {
+                if (!all[i].isTrigger) continue;
                 Plate p = new Plate();
                 p.trigger = all[i];
                 list.Add(p);
+            }
+
+            // No trigger anywhere: fall back to every collider, so the "not a trigger" warning below points at the real problem.
+            if (list.Count == 0)
+            {
+                for (int i = 0; i < all.Length; i++)
+                {
+                    Plate p = new Plate();
+                    p.trigger = all[i];
+                    list.Add(p);
+                }
             }
         }
 
@@ -192,12 +210,23 @@ public class RoomAltar : MonoBehaviour
     private void Update()
     {
         if (IsTriggered) return;
-        if (Room != null && !Room.IsFloorActive) return;   // the team is on another floor: this room is asleep
+        if (Room != null && !Room.IsFloorActive)   // the team is on another floor: this room is asleep
+        {
+            if (logProgress && !reportedAsleep)
+            {
+                reportedAsleep = true;
+                Debug.Log("RoomAltar '" + name + "': asleep, because its room '" + Room.name + "' is listed under a floor the team is not on. " +
+                          "If this is the floor you are testing, put the room in THAT floor's Rooms list in FloorController.", this);
+            }
+            return;
+        }
+        reportedAsleep = false;
 
         CountOccupants();
 
         bool anyHeld = false;
         bool allFull = true;
+        int fullCount = 0;
         float dt = Time.deltaTime;
 
         for (int i = 0; i < live.Length; i++)
@@ -210,7 +239,22 @@ public class RoomAltar : MonoBehaviour
 
             if (held) anyHeld = true;
             if (p.progress < 1f) allFull = false;
+            else fullCount++;
             if (p.progress != before) ApplyProgressColour(p);
+        }
+
+        if (logProgress && fullCount > 0 && !allFull && Time.time >= nextProgressLog)
+        {
+            nextProgressLog = Time.time + 3f;
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < live.Length; i++)
+            {
+                if (live[i].progress >= 1f) continue;
+                if (sb.Length > 0) sb.Append(", ");
+                sb.Append("'").Append(live[i].trigger.name).Append("'");
+            }
+            Debug.Log("RoomAltar '" + name + "': " + fullCount + " of " + live.Length + " plates are fully held, still waiting on " + sb +
+                      ". ALL plates must be held at the same time (a second player or a ball on each one).", this);
         }
 
         if (anyHeld != soundOn)
@@ -237,6 +281,7 @@ public class RoomAltar : MonoBehaviour
         StopHoldSound();
         if (triggeredSound != null) source.PlayOneShot(triggeredSound, volume);
 
+        if (logProgress) Debug.Log("RoomAltar '" + name + "': triggered" + (Room != null ? " (room '" + Room.name + "')." : ", but it has no room."), this);
         if (Triggered != null) Triggered(this);
     }
 

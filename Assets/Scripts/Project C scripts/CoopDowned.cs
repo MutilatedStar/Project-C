@@ -79,7 +79,8 @@ public class CoopDowned : MonoBehaviour
     [SerializeField, Min(0.1f)] private float respawnDelay = 1.5f;
     [Tooltip("Health a respawned player has, as a fraction of their maximum.")]
     [SerializeField, Range(0.05f, 1f)] private float respawnHealthPercent = 1f;
-    [Tooltip("ON: blowing up sets this player's score back to 0 (with Shared Score on, that is the team total).")]
+    [Tooltip("ON: blowing up sets THIS player's score back to 0 (the other player keeps theirs). With Shared Score on, the team number drops by " +
+             "the points this player had earned. When the whole team is wiped, the Lights Out screen resets everybody's score on Retry.")]
     [SerializeField] private bool resetScoreOnBlowUp = true;
     [Tooltip("ON: both cameras jump straight onto the players when someone respawns, instead of gliding across the level.")]
     [SerializeField] private bool snapCameraOnRespawn = true;
@@ -222,7 +223,6 @@ public class CoopDowned : MonoBehaviour
     private bool roomEntrySet;
 
     private bool healWarned;
-    private static bool scoreWarned;
     private static bool wipeRaised;   // TeamWiped was already raised for the team being all down (cleared when anybody gets up)
     private static bool noScreenWarned;
     private static float strayStart = -1f;   // when everyone with a CoopDowned was first seen down while the game was not over
@@ -305,7 +305,6 @@ public class CoopDowned : MonoBehaviour
     private static void ResetStatics()
     {
         All.Clear();
-        scoreWarned = false;
         wipeRaised = false;
         noScreenWarned = false;
         strayStart = -1f;
@@ -420,10 +419,6 @@ public class CoopDowned : MonoBehaviour
             BlowUp();
             return;
         }
-
-        // PVP: a knocked-out player stays down until the round is over. Nobody revives them (the other player is the enemy)
-        // and they can't give up and respawn mid-round. PvpMatch ends the round and reloads the stage.
-        if (PvpMode.Enabled) return;
 
         if (FloorController.BlocksInput) return;
 
@@ -779,40 +774,10 @@ public class CoopDowned : MonoBehaviour
 
     // ------------------------------------------------------------ score
 
-    // CoopScore (CoopRules.cs) was not available when this was written, so the reset looks for a method that clears one player's score
-    // by its usual names. If none fits, it says so once. If you know the method, replace the body with a direct call.
+    // CoopScore.Reset sets ONLY this player's own points to 0 (CoopRules.cs).
     private static void ResetScore(int playerNumber)
     {
-        System.Type type = typeof(CoopScore);
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
-
-        string[] clearNames = { "Reset", "ResetPlayer", "ResetScore", "Clear", "ClearPlayer", "Zero" };
-        for (int i = 0; i < clearNames.Length; i++)
-        {
-            MethodInfo m = type.GetMethod(clearNames[i], flags, null, new[] { typeof(int) }, null);
-            if (m != null) { m.Invoke(null, new object[] { playerNumber }); return; }
-        }
-
-        string[] setNames = { "Set", "SetScore" };
-        for (int i = 0; i < setNames.Length; i++)
-        {
-            MethodInfo m = type.GetMethod(setNames[i], flags, null, new[] { typeof(int), typeof(int) }, null);
-            if (m != null) { m.Invoke(null, new object[] { playerNumber, 0 }); return; }
-        }
-
-        string[] addNames = { "Add", "AddScore", "AddPoints" };
-        for (int i = 0; i < addNames.Length; i++)
-        {
-            MethodInfo m = type.GetMethod(addNames[i], flags, null, new[] { typeof(int), typeof(int) }, null);
-            if (m != null) { m.Invoke(null, new object[] { playerNumber, -CoopScore.Of(playerNumber) }); return; }
-        }
-
-        if (!scoreWarned)
-        {
-            scoreWarned = true;
-            Debug.LogWarning("CoopDowned: it could not find a way to reset the score in CoopScore (it looked for Reset / Set / Add with a player number). " +
-                             "The score is NOT reset. Fix: call your own reset in ResetScore() in CoopDowned.cs.");
-        }
+        CoopScore.Reset(playerNumber);
     }
 
     // ------------------------------------------------------------ hiding the body while blown up

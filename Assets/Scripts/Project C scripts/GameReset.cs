@@ -7,9 +7,12 @@ using Ilumisoft.HealthSystem;
 /// Used by:
 ///   - PauseController's "Quit to Main Menu" button
 ///   - RetryButton on the Failure screen
+///   - LightsOutScreen (Level Select / Menu, and Retry for the score part)
+///   - CoopScore, when a scene is loaded fresh (the Shop trip excepted)
 ///
 /// Other scripts can call it too (a victory screen that returns to the Main Menu, say):
-///   GameReset.ResetRun();
+///   GameReset.ResetRun();      // score and health
+///   GameReset.ResetScores();   // score only
 ///
 /// Nothing to add to a scene: this is a plain static class.
 /// </summary>
@@ -18,8 +21,18 @@ public static class GameReset
     /// <summary>Score back to 0 and the player's health back to full.</summary>
     public static void ResetRun()
     {
-        ScoreController.ResetScore();
+        ResetScores();
         RestorePlayerHealth();
+    }
+
+    /// <summary>
+    /// Every score back to 0: each player's co-op score (CoopScore) AND the single team score the Shop spends (ScoreController),
+    /// so the score on screen and the Shop money never disagree.
+    /// </summary>
+    public static void ResetScores()
+    {
+        CoopScore.ResetAll();
+        ScoreController.ResetScore();
     }
 
     /// <summary>

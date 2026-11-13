@@ -12,6 +12,9 @@ using UnityEngine.Audio;
 /// - Default fade in / fade out is 10 seconds. Changing tracks crossfades.
 ///
 /// From other scripts:  MusicManager.Instance.NextTrack();  .ToggleMusic();  .SetOn(false);  .AddTrack(clip);
+///
+/// HOLD / RELEASE (used by the Lights Out screen): Hold(seconds) fades the music out and keeps it silent, whatever the buttons do, and
+/// Release(seconds) brings it back. It never touches the saved On/Off choice, so the player's setting is exactly as it was afterwards.
 /// </summary>
 [DisallowMultipleComponent]
 public class MusicManager : MonoBehaviour
@@ -59,6 +62,9 @@ public class MusicManager : MonoBehaviour
     public bool IsOn { get { return _isOn; } }
     public bool IsShuffling { get { return _shuffling; } }
 
+    /// <summary>True between Hold and Release: the music is kept silent no matter what the buttons say.</summary>
+    public bool IsHeld { get { return _held; } }
+
     // One Voice = one AudioSource + its fade state. Several can overlap during a crossfade.
     private class Voice
     {
@@ -75,6 +81,7 @@ public class MusicManager : MonoBehaviour
     private readonly List<Voice> _voices = new List<Voice>();
     private Voice _current;
     private bool _isOn;
+    private bool _held;   // Hold() is in effect: nothing may start or come back until Release()
     private bool _started;
     private bool _shuffling;
     private int _trackIndex;
@@ -117,7 +124,7 @@ public class MusicManager : MonoBehaviour
     {
         _started = true;
         RefreshLabels();
-        if (_isOn) StartSelected();
+        if (_isOn && !_held) StartSelected();
     }
 
     private void OnDestroy()
@@ -149,6 +156,13 @@ public class MusicManager : MonoBehaviour
         {
             PlayerPrefs.SetInt(prefsKey, on ? 1 : 0);
             PlayerPrefs.Save();
+        }
+
+        if (on && _held)
+        {
+            // The choice is saved above, but the music stays silent until Release() (it comes back then, because the setting is On).
+            RefreshLabels();
+            return;
         }
 
         if (on)
@@ -184,10 +198,54 @@ public class MusicManager : MonoBehaviour
         AdvanceSelection();
         ReleaseCurrent();
 
-        if (_isOn) StartSelected();
+        if (_isOn) { if (!_held) StartSelected(); }
         else if (nextTurnsMusicOn) SetOn(true);
 
         RefreshLabels();
+    }
+
+    /// <summary>
+    /// Fades the music out over this many seconds and keeps it silent until Release(). Safe to call twice.
+    /// The On/Off setting (and its saved PlayerPrefs value) is NOT changed.
+    /// </summary>
+    public void Hold(float fadeSeconds)
+    {
+        if (_held) return;
+        _held = true;
+
+        for (int i = 0; i < _voices.Count; i++)
+        {
+            Voice v = _voices[i];
+            if (!v.inUse || v.paused) continue;
+
+            v.target = 0f;
+            v.rate = RateFor(fadeSeconds);
+            v.pauseWhenSilent = v == _current;   // the current track pauses (so it can come back); a track already fading out just ends
+        }
+    }
+
+    /// <summary>
+    /// Ends Hold(): if the music setting is On, the track that was playing fades back in over this many seconds (or the selected track starts,
+    /// if it was dropped meanwhile). If the setting is Off, nothing plays. Safe to call twice.
+    /// </summary>
+    public void Release(float fadeSeconds)
+    {
+        if (!_held) return;
+        _held = false;
+
+        if (!_isOn) return;
+
+        if (_current != null)
+        {
+            if (_current.paused) { _current.src.UnPause(); _current.paused = false; }
+            _current.target = 1f;
+            _current.rate = RateFor(fadeSeconds);
+            _current.pauseWhenSilent = false;
+        }
+        else
+        {
+            StartSelected();
+        }
     }
 
     /// <summary>Adds a clip to the end of the playlist at runtime.</summary>
@@ -197,7 +255,7 @@ public class MusicManager : MonoBehaviour
         tracks.Add(clip);
         _bag.Clear();
         _bagPos = 0;
-        if (_started && _isOn && _current == null) StartSelected();
+        if (_started && _isOn && !_held && _current == null) StartSelected();
         RefreshLabels();
     }
 
@@ -252,7 +310,7 @@ public class MusicManager : MonoBehaviour
 
     private void WatchForTrackEnd()
     {
-        if (!_isOn || _current == null || _current.paused) return;
+        if (_held || !_isOn || _current == null || _current.paused) return;
 
         AudioSource s = _current.src;
         if (s.loop || s.clip == null) return;

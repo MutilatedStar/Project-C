@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Ilumisoft.HealthSystem;
 
 /// <summary>
@@ -118,9 +119,18 @@ public static class CoopRules
 ///     CoopScore.Of(1)                                     // what Player 1's score reads as right now
 ///     CoopScore.Total                                     // the one team number (win screen, high score)
 ///     CoopScore.ResetAll();                               // new run: back to zero
+///     CoopScore.Reset(2);                                 // only Player 2 loses their points (CoopDowned does this when a player blows up)
 ///
 /// Of(n) follows the rules: Shared Score ON gives everyone the team total, OFF gives that player's own points,
 /// and a player who doesn't count (single player mode) reads 0.
+///
+/// WHEN THE SCORE GOES BACK TO ZERO (all of it automatic):
+///   - one player blows up (CoopDowned, Reset Score On Blow Up): only THAT player's points. With Shared Score ON the team number drops by what
+///     that player had earned.
+///   - the whole team is wiped and picks Retry on the Lights Out screen (Reset Score On Retry), or leaves through Level Select / Menu.
+///   - any scene is loaded fresh (leaving for another scene and coming back, a restart, the menu...), EXCEPT the trip to the Shop and back:
+///     FloorController calls BeginShopTrip, so the points earned before the Shop are still there when the dungeon loads again.
+///     CoopRulesManager has a tick (Reset Score On Scene Change) to switch the scene rule off.
 /// </summary>
 public static class CoopScore
 {
@@ -129,6 +139,15 @@ public static class CoopScore
 
     /// <summary>Raised whenever points are added or the scores are reset.</summary>
     public static event Action Changed;
+
+    /// <summary>ON (default): loading a scene sets the score back to zero (not for the Shop trip). CoopRulesManager sets this from its tick.</summary>
+    public static bool ResetOnSceneChange = true;
+
+    // A trip to the Shop under way: the scene we left, and whether the Shop itself has loaded yet.
+    private static bool _shopTripPending;
+    private static bool _inShop;
+    private static string _shopScene;
+    private static string _homeScene;
 
     /// <summary>
     /// Set by a player's weapon for the instant its hit is applied (and put back to 0 right after), so a foe that dies
@@ -202,11 +221,68 @@ public static class CoopScore
         if (Changed != null) Changed();
     }
 
+    /// <summary>Sets ONE player's own points back to zero (the other players keep theirs).</summary>
+    public static void Reset(int playerNumber)
+    {
+        if (playerNumber < 1 || playerNumber > MaxPlayers) return;
+        if (_own[playerNumber] == 0) return;
+
+        _own[playerNumber] = 0;
+        if (Changed != null) Changed();
+    }
+
+    /// <summary>
+    /// Call right before loading the Shop scene. The score is kept for the trip there and for the way back to the scene that is being left;
+    /// any other scene load resets it as usual. FloorController does this for you.
+    /// </summary>
+    public static void BeginShopTrip(string shopSceneName)
+    {
+        _shopTripPending = true;
+        _inShop = false;
+        _shopScene = shopSceneName;
+        _homeScene = SceneManager.GetActiveScene().name;
+    }
+
+    // Runs after every scene's Awake / OnEnable (so a CoopRulesManager in the new scene has already set ResetOnSceneChange).
+    private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (mode != LoadSceneMode.Single) return;   // an extra scene added on top is not a scene change
+
+        if (_shopTripPending)
+        {
+            _shopTripPending = false;
+            if (scene.name == _shopScene)
+            {
+                _inShop = true;   // arrived in the Shop: keep everything
+                return;
+            }
+            // Something other than the Shop loaded instead: treat it like any other scene change.
+        }
+        else if (_inShop)
+        {
+            _inShop = false;
+            if (scene.name == _homeScene) return;   // back from the Shop: keep everything
+            // Left the Shop for somewhere else (the menu, say): a new run.
+        }
+
+        if (ResetOnSceneChange) GameReset.ResetScores();
+    }
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStatics()
     {
         for (int n = 0; n <= MaxPlayers; n++) _own[n] = 0;
         Changed = null;
+
+        ResetOnSceneChange = true;
+        _shopTripPending = false;
+        _inShop = false;
+        _shopScene = null;
+        _homeScene = null;
+
+        // Taken off first so a play session started with "Reload Domain" switched off never listens twice.
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+        SceneManager.sceneLoaded += OnSceneLoaded;
     }
 }
 
@@ -233,6 +309,12 @@ public class CoopRulesManager : MonoBehaviour
     [Tooltip("ON: swords and sword upgrades are shared, so one player unlocking a sword unlocks it for everybody. OFF (default): each player has their own collection.")]
     public bool sharedWeapons = false;
 
+    [Header("Score")]
+    [Tooltip("ON (default): the score goes back to 0 whenever a scene is loaded fresh (leaving for another scene and coming back, a restart, the menu). " +
+             "The trip to the Shop and back is the one exception, so the money earned before the Shop is still there afterwards. " +
+             "OFF: the score is kept between scenes, as it was before.")]
+    public bool resetScoreOnSceneChange = true;
+
     [Header("Optional on-screen buttons (tapped by code, leave OnClick empty)")]
     public DirectButton sharedDamageButton = new DirectButton();
     public DirectButton sharedScoreButton = new DirectButton();
@@ -245,6 +327,7 @@ public class CoopRulesManager : MonoBehaviour
 
     private void Awake()
     {
+        CoopScore.ResetOnSceneChange = resetScoreOnSceneChange;   // before the scene-loaded callback, which is what reads it
         CoopRules.Initialize(sharedDamage, sharedScore, singlePlayerMode, singlePlayerTarget, sharedWeapons);
         CopyToFields();   // show what the rules really are (they may have been set in an earlier scene)
     }

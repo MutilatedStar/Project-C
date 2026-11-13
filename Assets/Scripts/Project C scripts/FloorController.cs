@@ -578,6 +578,19 @@ public class FloorController : MonoBehaviour
         if (floors == null || floors.Length == 0) return;
 
         int active = Mathf.Clamp(floor - 1, 0, floors.Length - 1);
+
+        // A room is live when the team is on ANY floor that lists it. (Going floor by floor, the LAST listing used to win, so a
+        // room listed under two floors was put to sleep on the first one.)
+        var liveRooms = new HashSet<PillarRoom>();
+        FloorLink activeRow = floors[active];
+        if (activeRow != null && activeRow.rooms != null)
+        {
+            for (int r = 0; r < activeRow.rooms.Length; r++)
+            {
+                if (activeRow.rooms[r] != null) liveRooms.Add(activeRow.rooms[r]);
+            }
+        }
+
         for (int i = 0; i < floors.Length; i++)
         {
             FloorLink row = floors[i];
@@ -588,7 +601,7 @@ public class FloorController : MonoBehaviour
             if (row.rooms == null) continue;
             for (int r = 0; r < row.rooms.Length; r++)
             {
-                if (row.rooms[r] != null) row.rooms[r].SetFloorActive(i == active);
+                if (row.rooms[r] != null) row.rooms[r].SetFloorActive(liveRooms.Contains(row.rooms[r]));
             }
         }
     }
@@ -609,6 +622,40 @@ public class FloorController : MonoBehaviour
             {
                 Debug.LogWarning("FloorController: door '" + everyDoor[i].name + "' is not in any floor's Doors list, so it does nothing. " +
                                  "Drag it into the Doors list of the floor it belongs to.", everyDoor[i]);
+            }
+        }
+
+        // A room should be listed under ONE floor. Listed twice it is live on both; listed nowhere it is live on every floor.
+        var roomFloor = new Dictionary<PillarRoom, int>();
+        for (int i = 0; i < floors.Length; i++)
+        {
+            FloorLink row = floors[i];
+            if (row == null || row.rooms == null) continue;
+            for (int r = 0; r < row.rooms.Length; r++)
+            {
+                PillarRoom room = row.rooms[r];
+                if (room == null) continue;
+
+                int firstFloor;
+                if (roomFloor.TryGetValue(room, out firstFloor))
+                {
+                    if (firstFloor != i)
+                    {
+                        Debug.LogWarning("FloorController: room '" + room.name + "' is listed under floor " + (firstFloor + 1) + " AND floor " + (i + 1) +
+                                         ", so it is live on both. If floor " + (i + 1) + " has a room of its own, put that one there instead.", this);
+                    }
+                }
+                else roomFloor[room] = i;
+            }
+        }
+
+        PillarRoom[] everyRoom = FindObjectsByType<PillarRoom>(FindObjectsSortMode.None);
+        for (int i = 0; i < everyRoom.Length; i++)
+        {
+            if (!roomFloor.ContainsKey(everyRoom[i]))
+            {
+                Debug.LogWarning("FloorController: room '" + everyRoom[i].name + "' is not in any floor's Rooms list, so it is live on EVERY floor. " +
+                                 "Drag it into the Rooms list of the floor it belongs to.", everyRoom[i]);
             }
         }
 
@@ -694,6 +741,7 @@ public class FloorController : MonoBehaviour
         ClearFoes();
         CurrentFloor++;
         pendingShopReturn = true;
+        CoopScore.BeginShopTrip(shopSceneName);   // the score is kept for the Shop and the way back (any other scene load resets it)
         SceneManager.LoadScene(shopSceneName);   // OnDestroy un-freezes the foes
         return true;
     }
