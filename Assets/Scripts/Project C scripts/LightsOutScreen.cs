@@ -763,6 +763,19 @@ public class LightsOutScreen : MonoBehaviour
         return -1;
     }
 
+    /// <summary>
+    /// Sets where Retry puts a player back on the first floor (room 0). StageLauncher calls this with the picked stage's spawn points, so a
+    /// Retry returns everybody to THAT stage's start instead of wherever they happened to stand when the scene opened. It wins over the
+    /// position RecordStartPositions remembers by itself. playerNumber starts at 1.
+    /// </summary>
+    public void SetStartPosition(int playerNumber, Vector3 position)
+    {
+        if (playerNumber < 1 || playerNumber > MaxPlayers) return;
+
+        _startPositions[playerNumber] = position;   // Vector3 -> Vector2 drops z, which is what a 2D game wants
+        _hasStart[playerNumber] = true;
+    }
+
     // Remembers where each player stood the first time we saw them. Not while a floor change is moving them around.
     private void RecordStartPositions()
     {
