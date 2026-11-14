@@ -1,0 +1,33 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cf1c09966154ed848a429bcd874f79c9, type: 3}
+  m_Name: RankSettings
+  m_EditorClassIdentifier: Assembly-CSharp::RankSettings
+  enabled: 1
+  roomCount: 6
+  defaults:
+    fastSeconds: 60
+    mediumSeconds: 90
+    slowSeconds: 150
+    highScore: 1500
+    mediumScore: 800
+    lowScore: 300
+    totalCollectables: -1
+  bPoints: 4
+  cPoints: 3
+  dPoints: 2
+  sMinCollectFraction: 0
+  capRankWhenMissing: 3
+  overrides: []
+  levelSelectScene: LevelSelect
+  mainMenuScene: Mainmenu
+  buttonGraceSeconds: 0.6
