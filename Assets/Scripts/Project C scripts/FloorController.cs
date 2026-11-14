@@ -148,7 +148,10 @@ public class FloorController : MonoBehaviour
 
     /// <summary>True when the players and the notebook should ignore the keyboard: a floor change is running, the floor
     /// change ended earlier this very frame (so the same key press can't also open the notebook), or the pause menu asks for it.</summary>
-    public static bool BlocksInput => IsChangingFloor || closedFrame == Time.frameCount || PauseController.BlocksInput || LightsOutScreen.BlocksInput;
+    public static bool BlocksInput => IsChangingFloor || closedFrame == Time.frameCount || PauseController.BlocksInput || LightsOutScreen.BlocksInput || LevelResults.BlocksInput;
+
+    /// <summary>How many floors the Floors list has (0 if none). LevelResults uses it to tell which room each gem belongs to.</summary>
+    public int FloorCount { get { return floors == null ? 0 : floors.Length; } }
 
     /// <summary>Fires after the players have been moved to a new floor, with the new floor number.</summary>
     public static event System.Action<int> FloorChanged;
@@ -194,6 +197,8 @@ public class FloorController : MonoBehaviour
 
         IsChangingFloor = false;
 
+        LevelResults.OnSceneStart(returningFromShop);   // starts the room timer and the run's results (LevelResults.cs)
+
         if (floorScreen != null)
         {
             floorGroup = floorScreen.GetComponent<CanvasGroup>();
@@ -235,6 +240,7 @@ public class FloorController : MonoBehaviour
         if (PauseController.IsPaused) return;   // nothing under the players counts while a menu is up
         if (MenuController.IsOpen) return;
         if (LightsOutScreen.IsActive) return;   // the team is wiped: nothing under the downed players counts
+        if (LevelResults.IsActive) return;      // the results panel / win screen is up: the doors have already fired
 
         updatesRun++;
         CheckDoors();
@@ -504,8 +510,17 @@ public class FloorController : MonoBehaviour
 
         doorStallSeconds = 0f;
         doorsArmed = false;
-        if (down) GoDown();
-        else TryOpenShop();
+
+        // Everybody is on the door: the results drop-down (time, gems, score -> rank) comes first, and only the button on it moves the team on.
+        // TryComplete says false when the ranks are off (or it's a PVP arena), and then the door works exactly as it always did.
+        if (down)
+        {
+            if (!LevelResults.TryComplete(CurrentFloor, false, GoDown)) GoDown();
+        }
+        else
+        {
+            if (!LevelResults.TryComplete(CurrentFloor, true, () => TryOpenShop())) TryOpenShop();
+        }
     }
 
     // ---- "somebody is on a door and nothing happens": say why, once in a while.

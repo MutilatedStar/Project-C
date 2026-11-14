@@ -129,6 +129,9 @@ public class ScorePickup : MonoBehaviour
     /// <summary>True once a player has taken it.</summary>
     public bool IsCollected { get { return collected; } }
 
+    /// <summary>Raised the moment a player takes ANY gem (the gem, and the player's number). LevelResults counts them for the room's rank.</summary>
+    public static event System.Action<ScorePickup, int> Collected;
+
     /// <summary>The glow style chosen for this gem (only used while anyone can take it).</summary>
     public GlowStyle Glow { get { return glowStyle; } }
 
@@ -687,6 +690,7 @@ public class ScorePickup : MonoBehaviour
 
         CoopScore.Add(points, number);   // note the order in CoopRules.cs: (amount, playerNumber)
         if (alsoAddToScoreController) ScoreController.AddScore(points);
+        if (Collected != null) Collected(this, number);
 
         // Hidden at once (the glow too, it is made of renderers under the gem), so it can't be taken twice or seen lingering;
         // the object itself goes a moment later.

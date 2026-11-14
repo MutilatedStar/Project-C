@@ -33,6 +33,7 @@ public static class GameReset
     {
         CoopScore.ResetAll();
         ScoreController.ResetScore();
+        LevelResults.NotifyScoresReset();   // a Retry (or a fresh start) also starts the room's timer and gem count over
     }
 
     /// <summary>

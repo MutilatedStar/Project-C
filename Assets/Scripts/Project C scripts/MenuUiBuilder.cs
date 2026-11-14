@@ -344,6 +344,7 @@ public static class MenuUiBuilder
         view.pillNumber = pillText;
         view.nameLabel = nameText;
         view.noPictureColor = noPicture;
+        view.BuildRecordUi();   // the rank badge and the best score / time strip, as real objects you can restyle in the Scene view
         return view;
     }
 

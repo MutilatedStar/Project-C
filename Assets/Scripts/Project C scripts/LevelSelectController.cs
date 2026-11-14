@@ -225,6 +225,10 @@ public class LevelSelectController : MonoBehaviour
             card.gameObject.SetActive(true);
             card.Fill(title, i + 1, entry.thumbnail);
 
+            // The rank badge and the best score / time come from the saved records (PVP arenas aren't ranked).
+            bool ranked = mode == StageMode.Puzzle;
+            card.ShowRecord(ranked ? LevelRecords.Get(entry.id) : null, ranked);
+
             if (card.button != null)
             {
                 StageCatalog.Entry captured = entry;
