@@ -12,6 +12,7 @@ using UnityEngine.Audio;
 /// - Default fade in / fade out is 10 seconds. Changing tracks crossfades.
 ///
 /// From other scripts:  MusicManager.Instance.NextTrack();  .ToggleMusic();  .SetOn(false);  .AddTrack(clip);
+///                      .SelectTrack(3);  .SetShuffle(true);  .TrackCount;  .SelectedTrack;   (the pause menu uses these)
 ///
 /// HOLD / RELEASE (used by the Lights Out screen): Hold(seconds) fades the music out and keeps it silent, whatever the buttons do, and
 /// Release(seconds) brings it back. It never touches the saved On/Off choice, so the player's setting is exactly as it was afterwards.
@@ -201,6 +202,46 @@ public class MusicManager : MonoBehaviour
         if (_isOn) { if (!_held) StartSelected(); }
         else if (nextTurnsMusicOn) SetOn(true);
 
+        RefreshLabels();
+    }
+
+    /// <summary>How many usable tracks are in the playlist.</summary>
+    public int TrackCount { get { return tracks.Count; } }
+
+    /// <summary>The selected track number, starting at 1. (While shuffling this is the track Shuffle will go back to when it is switched off.)</summary>
+    public int SelectedTrack { get { return _trackIndex + 1; } }
+
+    /// <summary>
+    /// Picks a track by number (1 = the first one) and turns Shuffle off. A number past the end picks the LAST track. The old track fades out
+    /// and the new one fades in, the same as the Next button. Does nothing if that track is already the selected one. Used by the pause menu.
+    /// </summary>
+    public void SelectTrack(int number)
+    {
+        if (tracks.Count == 0) return;
+
+        int index = Mathf.Clamp(number - 1, 0, tracks.Count - 1);
+        if (!_shuffling && index == _trackIndex) return;
+
+        _shuffling = false;
+        _trackIndex = index;
+        ReleaseCurrent();
+
+        if (_isOn && !_held) StartSelected();
+        RefreshLabels();
+    }
+
+    /// <summary>
+    /// Turns Shuffle on or off. Off goes back to the selected track (SelectedTrack) and repeats it. Does nothing if Shuffle is already in that
+    /// state. Used by the pause menu.
+    /// </summary>
+    public void SetShuffle(bool shuffle)
+    {
+        if (tracks.Count == 0 || shuffle == _shuffling) return;
+
+        _shuffling = shuffle;
+        ReleaseCurrent();
+
+        if (_isOn && !_held) StartSelected();
         RefreshLabels();
     }
 

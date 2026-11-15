@@ -54,6 +54,7 @@ public class MusicPlayer : MonoBehaviour
         if (source == null) source = gameObject.AddComponent<AudioSource>();
         source.playOnAwake = false;
         source.spatialBlend = 0f; // 2D sound
+        source.ignoreListenerPause = true; // the pause menu pauses the game's sounds (AudioListener.pause); the music must keep playing so its settings can be heard
     }
 
     void OnEnable()
