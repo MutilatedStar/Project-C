@@ -16,6 +16,8 @@ using UnityEngine.Audio;
 ///
 /// HOLD / RELEASE (used by the Lights Out screen): Hold(seconds) fades the music out and keeps it silent, whatever the buttons do, and
 /// Release(seconds) brings it back. It never touches the saved On/Off choice, so the player's setting is exactly as it was afterwards.
+/// While held, NextTrack / SelectTrack / SetShuffle are ignored (each logs a warning, and its stack trace shows who called it), so the song
+/// that was playing is the one that fades back in, not track 1 or a new shuffle pick.
 /// </summary>
 [DisallowMultipleComponent]
 public class MusicManager : MonoBehaviour
@@ -59,6 +61,8 @@ public class MusicManager : MonoBehaviour
     public AudioMixerGroup outputGroup;
     [Tooltip("On: the music keeps playing while PauseManager pauses the game's audio.")]
     public bool playWhilePaused = true;
+    [Tooltip("On: the Console logs every song that starts, and every hold and release, with the stack trace of whatever asked for it. Turn it off once the music behaves.")]
+    public bool logTrackChanges = true;
 
     public bool IsOn { get { return _isOn; } }
     public bool IsShuffling { get { return _shuffling; } }
@@ -195,6 +199,7 @@ public class MusicManager : MonoBehaviour
     public void NextTrack()
     {
         if (tracks.Count < 2) return;
+        if (IgnoreWhileHeld("NextTrack()")) return;
 
         AdvanceSelection();
         ReleaseCurrent();
@@ -218,6 +223,7 @@ public class MusicManager : MonoBehaviour
     public void SelectTrack(int number)
     {
         if (tracks.Count == 0) return;
+        if (IgnoreWhileHeld("SelectTrack(" + number + ")")) return;
 
         int index = Mathf.Clamp(number - 1, 0, tracks.Count - 1);
         if (!_shuffling && index == _trackIndex) return;
@@ -237,6 +243,7 @@ public class MusicManager : MonoBehaviour
     public void SetShuffle(bool shuffle)
     {
         if (tracks.Count == 0 || shuffle == _shuffling) return;
+        if (IgnoreWhileHeld("SetShuffle(" + shuffle + ")")) return;
 
         _shuffling = shuffle;
         ReleaseCurrent();
@@ -253,6 +260,12 @@ public class MusicManager : MonoBehaviour
     {
         if (_held) return;
         _held = true;
+
+        if (logTrackChanges)
+        {
+            Debug.Log("MusicManager: held. Song playing at that moment: " +
+                      (_current != null && _lastPlayed >= 0 ? "track " + (_lastPlayed + 1) + " ('" + tracks[_lastPlayed].name + "')" : "none") + ".", this);
+        }
 
         for (int i = 0; i < _voices.Count; i++)
         {
@@ -276,6 +289,13 @@ public class MusicManager : MonoBehaviour
 
         if (!_isOn) return;
 
+        if (logTrackChanges)
+        {
+            Debug.Log("MusicManager: released. " + (_current != null && _lastPlayed >= 0
+                ? "Resuming track " + (_lastPlayed + 1) + " ('" + tracks[_lastPlayed].name + "')."
+                : "No song was playing, so the selected track starts."), this);
+        }
+
         if (_current != null)
         {
             if (_current.paused) { _current.src.UnPause(); _current.paused = false; }
@@ -287,6 +307,17 @@ public class MusicManager : MonoBehaviour
         {
             StartSelected();
         }
+    }
+
+    // While the music is held (the Lights Out screen is up) nothing may change which song is selected or playing: the song that was playing
+    // has to be the one that comes back. The warning's stack trace in the Console points at whatever script made the call.
+    private bool IgnoreWhileHeld(string call)
+    {
+        if (!_held) return false;
+
+        Debug.LogWarning("MusicManager: " + call + " was ignored because the music is held (the Lights Out screen is up). " +
+                         "The song that was playing comes back when the hold ends. The stack trace below shows who called it.", this);
+        return true;
     }
 
     /// <summary>Adds a clip to the end of the playlist at runtime.</summary>
@@ -395,6 +426,12 @@ public class MusicManager : MonoBehaviour
 
         _current = v;
         _lastPlayed = idx;
+
+        if (logTrackChanges)
+        {
+            Debug.Log("MusicManager: track " + (idx + 1) + " of " + tracks.Count + " ('" + tracks[idx].name + "') started" +
+                      (_held ? " WHILE HELD" : "") + ". Click this line and read the stack trace below it to see what asked for it.", this);
+        }
     }
 
     // Lets the current track fade out and free itself (or drops it instantly if it was paused).

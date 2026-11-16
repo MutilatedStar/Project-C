@@ -52,6 +52,8 @@ public class LevelSelectController : MonoBehaviour
         public Button roundsButton;
         [Tooltip("PVP page only: the text on the rounds button.")]
         public TMP_Text roundsLabel;
+        [Tooltip("Optional. Level Select page only: a text that shows the best OVERALL rank (the one the win screen gives, made from your best rank on every stage). Leave empty to skip.")]
+        public TMP_Text overallRankLabel;
     }
 
     [Header("Scenes (must be in Build Settings)")]
@@ -78,6 +80,12 @@ public class LevelSelectController : MonoBehaviour
     [SerializeField] private string oneStageText = "1 stage";
     [Tooltip("{0} becomes the number of rounds (1, 2 or 3).")]
     [SerializeField] private string roundsFormat = "FIRST TO {0}";
+
+    [Header("Ranks")]
+    [Tooltip("{0} becomes the overall rank letter (or a dash when nothing is cleared yet).")]
+    [SerializeField] private string overallRankFormat = "BEST RANK  {0}";
+    [Tooltip("ON: prints one Console line per card saying which rank was found for it, and where the saved ranks actually are if none was. Switch it off when the ranks show up.")]
+    [SerializeField] private bool logRecords = true;
 
     [Header("Card panel size")]
     [Tooltip("ON: the panel behind the cards grows with the number of stages, from Min Card Height up to the height you gave the Card object in the Scene view. " +
@@ -155,6 +163,10 @@ public class LevelSelectController : MonoBehaviour
         PvpMode.Enabled = false;
         PvpMode.ResetMatch();
 
+        // ...and nothing from a finished or abandoned run may leak into the next stage: the floor number, a pending Shop trip, frozen foes, locked players.
+        FloorController.ResetForMenus();
+        LevelResults.ClearStaleState();
+
         catalog = StageCatalog.Load();
         StageUi.EnsureEventSystem();
 
@@ -203,6 +215,11 @@ public class LevelSelectController : MonoBehaviour
         }
 
         FitCard(p, entries.Count);
+        if (mode == StageMode.Puzzle)
+        {
+            EnsureOverallRankLabel(p);
+            RefreshOverallRank(p, entries);
+        }
 
         if (p.cardTemplate != null) p.cardTemplate.gameObject.SetActive(false);   // the template is only a pattern
 
@@ -227,7 +244,9 @@ public class LevelSelectController : MonoBehaviour
 
             // The rank badge and the best score / time come from the saved records (PVP arenas aren't ranked).
             bool ranked = mode == StageMode.Puzzle;
-            card.ShowRecord(ranked ? LevelRecords.Get(entry.id) : null, ranked);
+            LevelRecord record = ranked ? LevelRecords.Get(entry.id) : null;
+            card.ShowRecord(record, ranked);
+            if (ranked && logRecords) LogRecord(entry, record);
 
             if (card.button != null)
             {
@@ -240,6 +259,59 @@ public class LevelSelectController : MonoBehaviour
             if (fx != null) fx.onCancel = Back;
         }
         return first;
+    }
+
+    // The scene was saved before the overall-rank text existed and the UI builder doesn't make one, so the field is empty and the readout never
+    // showed. If it is empty, a copy of the stage-count text is made right under it. Drag your own text into "Overall Rank Label" to replace it.
+    private void EnsureOverallRankLabel(StagePage p)
+    {
+        if (p.overallRankLabel != null || p.countLabel == null) return;
+
+        TMP_Text made = Instantiate(p.countLabel, p.countLabel.transform.parent);
+        made.gameObject.name = "Overall Rank Label";
+        RectTransform rt = made.rectTransform;
+        rt.anchoredPosition = p.countLabel.rectTransform.anchoredPosition - new Vector2(0f, Mathf.Max(24f, p.countLabel.rectTransform.rect.height));
+        p.overallRankLabel = made;
+    }
+
+    // The best OVERALL rank, worked out from the best rank on every stage exactly like the win screen does it.
+    private void RefreshOverallRank(StagePage p, List<StageCatalog.Entry> entries)
+    {
+        if (p.overallRankLabel == null) return;
+
+        RankSettings settings = RankSettings.Current;
+        int count = Mathf.Clamp(settings.roomCount, 1, Mathf.Max(1, entries.Count));
+        int[] ranks = new int[count];
+        int cleared = 0;
+        for (int i = 0; i < count; i++)
+        {
+            ranks[i] = i < entries.Count ? LevelRecords.BestRank(entries[i].id) : RankCalc.NoRank;
+            if (ranks[i] >= 0) cleared++;
+        }
+
+        string letter = "-";
+        if (cleared > 0)
+        {
+            int missing;
+            bool capped;
+            LevelRank overall = RankCalc.Overall(settings, ranks, out missing, out capped);
+            letter = RankCalc.Letter((int)overall);
+        }
+        p.overallRankLabel.text = overallRankFormat.Replace("{0}", letter);
+    }
+
+    private void LogRecord(StageCatalog.Entry entry, LevelRecord record)
+    {
+        if (record != null && record.Cleared)
+        {
+            Debug.Log("LevelSelectController: '" + entry.id + "' has best rank " + RankCalc.Letter(record.bestRank) + ", best score " + record.bestScore +
+                      ", " + record.plays + " play(s).", this);
+            return;
+        }
+
+        List<string> saved = LevelRecords.SavedIds();
+        Debug.Log("LevelSelectController: no rank is saved under '" + entry.id + "'. Ranks are saved under: " +
+                  (saved.Count == 0 ? "(nothing yet)" : string.Join(", ", saved)) + ".", this);
     }
 
     private void HookCancel(GameObject root)

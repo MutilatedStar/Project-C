@@ -14,9 +14,12 @@ using TMPro;
 /// (tick the other page's checkbox in the Inspector, or use the Show buttons on this component, to edit it). This script only decides which
 /// page is showing and what the buttons do.
 ///
-///   PLAY            Easy / Normal / Hard (the Difficulty Page)  ->  the normal game (Crawler scene). PVP is OFF. Same as before.
-///   LEVEL SELECT    loads the LevelSelect scene on its Level Select page (every Puzzle stage in the catalog).
-///   PVP             loads the LevelSelect scene on its PVP Arenas page.
+///   PLAY            Easy / Normal / Hard (the Difficulty Page)  ->  the normal game (Crawler scene). PVP is OFF. The pick is remembered.
+///   LEVEL SELECT    loads the LevelSelect scene on its Level Select page (every Puzzle stage in the catalog). The stages run on the last
+///                   difficulty picked under PLAY, or Medium (Normal) if none was picked yet.
+///   PVP             loads the LevelSelect scene on its PVP Arenas page. PVP always plays on Easy; the remembered difficulty is not touched.
+///
+/// The difficulty rules (trap damage, revive, Hard's "one dies, both die") live in DifficultyRules.
 ///
 /// What the buttons do is set in each button's OnClick list (they call the public methods below), so you can add or rewire buttons in the
 /// Inspector. To add a button, duplicate an existing one (Ctrl+D) so it keeps its highlight script, then change its OnClick.
@@ -283,7 +286,7 @@ public class MainMenuController : MonoBehaviour
         }
 
         loading = true;
-        FoeController.CurrentDifficulty = difficulty;
+        DifficultyRules.Choose(difficulty);   // runs now, and Level Select will use it later
         StageSelection.Clear();
         PvpMode.Enabled = false;
         StageUi.FadeAndLoad(this, scene);
@@ -302,6 +305,11 @@ public class MainMenuController : MonoBehaviour
         }
 
         loading = true;
+
+        // PVP is always Easy (the remembered difficulty is not touched). Level Select runs on the last difficulty picked, Medium if none was.
+        if (mode == StageMode.Pvp) DifficultyRules.UseForPvp();
+        else DifficultyRules.UseForLevelSelect();
+
         StageSelection.RequestBrowse(mode);
         if (immediately) UnityEngine.SceneManagement.SceneManager.LoadScene(scene);
         else StageUi.FadeAndLoad(this, scene);

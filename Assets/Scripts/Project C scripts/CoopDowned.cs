@@ -25,6 +25,11 @@ using Cainos.PixelArtTopDown_Basic;
 ///   EVERYONE DOWN  when every player that counts is at 0 health, nobody is left to revive anyone: whoever is still lying there blows up
 ///                  at once (Blow Up When Team Wiped), nobody respawns, and CoopHealth.TeamWiped is raised so LightsOutScreen (the game-over
 ///                  screen with Retry / Level Select / Menu) comes up. LightsOutScreen's Retry calls CoopDowned.ResetAllForRetry().
+///   FALLING        PlayerFallCheck (a separate component on the player) calls BeginFall() when the player's feet have no ground under them.
+///                  The player is locked, the picture shrinks away over Fall Shrink Time, then they are KILLED (this player only, no matter
+///                  what Invincible / Grace / Shared Damage say), their score is reset (Reset Score On Fall), and Fall Respawn Delay seconds
+///                  later they come back at the same respawn spot as above with FULL health. No knocked-down state, nobody has to revive
+///                  them, and the fall never counts as a team wipe, so falling alone does not bring up the game-over screen.
 ///   CAMERA         SplitScreenCamera lets go of a downed or blown-up player (their half follows the other player, or holds still if
 ///                  both are down) and takes them back by itself when their health is back: after a revive, or after a respawn (which also
 ///                  snaps the cameras onto them, see Snap Camera On Respawn).
@@ -40,7 +45,7 @@ using Cainos.PixelArtTopDown_Basic;
 [RequireComponent(typeof(CoopHealth))]
 public class CoopDowned : MonoBehaviour
 {
-    public enum DownState { Up, Down, BlownUp }
+    public enum DownState { Up, Down, BlownUp, Falling }
 
     [Header("Knocked down")]
     [Tooltip("The picture that is tinted and tipped over. Leave EMPTY to use the player's own SpriteRenderer (the same one PlayerGlow uses).")]
@@ -86,6 +91,18 @@ public class CoopDowned : MonoBehaviour
     [SerializeField] private bool snapCameraOnRespawn = true;
     [Tooltip("Seconds to wait after the players arrive in a new room before remembering where they stand as that room's respawn spot. Raise it if your doors move the players late.")]
     [SerializeField, Min(0f)] private float roomEntryDelay = 0.25f;
+
+    [Header("Falling into a pit (started by PlayerFallCheck)")]
+    [Tooltip("Seconds the picture takes to shrink away while the player falls.")]
+    [SerializeField, Min(0.05f)] private float fallShrinkTime = 0.6f;
+    [Tooltip("How small the picture is at the end of the fall, as a fraction of its normal size. 0 = it shrinks to nothing.")]
+    [SerializeField, Range(0f, 0.5f)] private float fallEndScale = 0f;
+    [Tooltip("Seconds between the end of the fall and coming back at the respawn spot.")]
+    [SerializeField, Min(0.1f)] private float fallRespawnDelay = 1f;
+    [Tooltip("ON: falling sets THIS player's score back to 0 (the other player keeps theirs). With Shared Score on, the team number drops by the points this player had earned.")]
+    [SerializeField] private bool resetScoreOnFall = true;
+    [Tooltip("Optional. Plays the moment the player starts to fall.")]
+    [SerializeField] private AudioClip pitFallClip;
 
     [Header("The burst")]
     [Tooltip("The player's picture is cut into Columns x Rows pieces that fly apart.")]
@@ -134,8 +151,11 @@ public class CoopDowned : MonoBehaviour
     /// <summary>True from the blow-up until the respawn.</summary>
     public bool IsBlownUp { get { return state == DownState.BlownUp; } }
 
-    /// <summary>True while knocked down or blown up: this player is out of the action.</summary>
+    /// <summary>True while knocked down, blown up or falling into a pit: this player is out of the action.</summary>
     public bool IsOut { get { return state != DownState.Up; } }
+
+    /// <summary>True from the moment the player starts to fall until they are back up (the shrink, then the wait for the respawn).</summary>
+    public bool IsFalling { get { return inFall; } }
 
     /// <summary>How far the revive is, 0 to 1.</summary>
     public float ReviveProgress { get { return Mathf.Clamp01(progress / reviveSeconds); } }
@@ -214,6 +234,13 @@ public class CoopDowned : MonoBehaviour
     private float fallT;
     private float fallSign = -1f;
     private readonly List<Renderer> hidden = new List<Renderer>();
+
+    // falling into a pit
+    private Vector3 startScale = Vector3.one;
+    private bool scaleChanged;
+    private bool inFall;          // from BeginFall until the player is back up
+    private bool fallRespawn;     // the coming respawn is the one after a fall (full health)
+    private bool holdingWipe;     // this player is holding one CoopHealth.TeamWipeBlockers while dead from a fall
 
     // rooms
     private int room;
@@ -346,6 +373,7 @@ public class CoopDowned : MonoBehaviour
         CheckTeamWipe();
 
         if (state == DownState.Down) UpdateDown(dt);
+        else if (state == DownState.Falling) UpdateFalling();
         else UpdateBlownUp(dt);
     }
 
@@ -379,7 +407,7 @@ public class CoopDowned : MonoBehaviour
     {
         for (int i = 0; i < All.Count; i++)
         {
-            if (All[i] != null && All[i].state == DownState.Up)
+            if (All[i] != null && (All[i].state == DownState.Up || All[i].inFall))
             {
                 strayStart = -1f;
                 strayWarned = false;
@@ -469,6 +497,12 @@ public class CoopDowned : MonoBehaviour
     {
         if (state == DownState.Up) return;
 
+        if (state == DownState.Falling)
+        {
+            AnimateFall();
+            return;
+        }
+
         if (state == DownState.BlownUp)
         {
             KeepBodyHidden();
@@ -553,6 +587,89 @@ public class CoopDowned : MonoBehaviour
         StartGrace();
     }
 
+    // ------------------------------------------------------------ falling into a pit
+
+    /// <summary>
+    /// The player has no ground under their feet: they fall. Called by PlayerFallCheck. The player is locked and untouchable, the picture shrinks
+    /// away (Fall Shrink Time), then they are killed, their score is reset and they respawn at full health (see FinishFall and Respawn).
+    /// Returns false when it cannot start: the player is already out (down, blown up, falling) or has no health.
+    /// </summary>
+    public bool BeginFall()
+    {
+        if (state != DownState.Up || !health.IsAlive) return false;
+
+        state = DownState.Falling;
+        inFall = true;
+        fallRespawn = false;
+        fallT = 0f;
+        progress = 0f;
+        reviverNear = false;
+
+        // Nothing hurts them on the way down (FinishFall kills them on purpose, which ignores this).
+        health.Grace = true;
+        input.Locked = true;
+        PlaySound(pitFallClip, transform.position);
+
+        // Remember what PutBack must put back. The glow is NOT switched off here: it stays on the picture and shrinks with it.
+        baseColor = glow != null ? glow.BaseColor : (sprite != null ? sprite.color : Color.white);
+        glowWasOn = false;
+        startRotation = visual != null ? visual.localRotation : Quaternion.identity;
+        if (animator != null) animatorSpeed = animator.speed;
+
+        startScale = visual != null ? visual.localScale : Vector3.one;
+        scaleChanged = false;
+
+        // The body is switched off while it falls, so a foe or the other player can't touch or push it, and a picture
+        // shrinking to nothing can't give the physics a collider of zero size.
+        if (rb != null)
+        {
+            rb.linearVelocity = Vector2.zero;
+            bodyWasSimulated = rb.simulated;
+            rb.simulated = false;
+        }
+
+        return true;
+    }
+
+    private void UpdateFalling()
+    {
+        input.Locked = true;   // a menu that unlocked this player must not give them control back
+        if (fallT >= 1f) FinishFall();
+    }
+
+    // Runs after every other script, so nothing can paint over the shrinking picture. A little ease-in: slow at the lip, quick at the end.
+    private void AnimateFall()
+    {
+        fallT = Mathf.Min(1f, fallT + Time.deltaTime / fallShrinkTime);
+
+        if (visual == null) return;
+
+        float end = Mathf.Max(fallEndScale, 0.001f);   // never exactly 0: a zero scale is a broken transform matrix
+        float k = Mathf.Lerp(1f, end, fallT * fallT);
+        visual.localScale = startScale * k;
+        scaleChanged = true;
+    }
+
+    // The shrink is over: the player dies (alone), loses their score, and waits to respawn like a blown-up player does.
+    private void FinishFall()
+    {
+        // Hold the team wipe back BEFORE the kill, or a player who falls while the other one is down (or alone in single player)
+        // would raise TeamWiped and bring up the game-over screen for what is only a respawn. PutBack lets go of it again.
+        CoopHealth.TeamWipeBlockers++;
+        holdingWipe = true;
+
+        health.Grace = false;
+        health.ForceKill();
+
+        state = DownState.BlownUp;   // the normal respawn wait (UpdateBlownUp -> Respawn) takes it from here
+        respawnLeft = fallRespawnDelay;
+        fallRespawn = true;
+        progress = 0f;
+        HideBody();                  // the picture, the glow, the jump shadow: nothing is left lying on the edge
+
+        if (resetScoreOnFall) ResetScore(health.PlayerNumber);
+    }
+
     // ------------------------------------------------------------ blown up
 
     private void BlowUp()
@@ -579,7 +696,9 @@ public class CoopDowned : MonoBehaviour
 
     private void Respawn()
     {
-        if (!Restore(MaxHealth() * respawnHealthPercent))
+        // A fall resets the player completely (full health); a blow-up gives back Respawn Health Percent.
+        float percent = fallRespawn ? 1f : respawnHealthPercent;
+        if (!Restore(MaxHealth() * percent))
         {
             respawnLeft = 2f;   // try again shortly; the problem has been reported once
             return;
@@ -618,6 +737,8 @@ public class CoopDowned : MonoBehaviour
     private void PutBack(bool teleport, Vector3 spot)
     {
         if (visual != null) visual.localRotation = startRotation;
+        if (scaleChanged && visual != null) visual.localScale = startScale;   // back to full size BEFORE the body is switched on again
+        scaleChanged = false;
         if (sprite != null) sprite.color = baseColor;
         if (animator != null) animator.speed = animatorSpeed;
         animatorFrozen = false;
@@ -640,6 +761,16 @@ public class CoopDowned : MonoBehaviour
         progress = 0f;
         reviverNear = false;
         wipeRaised = false;   // somebody is up again, so the next time everyone is down counts as a new wipe
+
+        // A fall is over: let go of the team-wipe hold taken in FinishFall (this player is alive again, or the whole thing was cancelled).
+        if (holdingWipe)
+        {
+            holdingWipe = false;
+            CoopHealth.TeamWipeBlockers = Mathf.Max(0, CoopHealth.TeamWipeBlockers - 1);
+        }
+        inFall = false;
+        fallRespawn = false;
+
         state = DownState.Up;
     }
 
@@ -678,6 +809,9 @@ public class CoopDowned : MonoBehaviour
     // The closest player that is alive, in the game, and standing within Revive Radius.
     private CoopHealth FindReviver()
     {
+        // Hard (one dies, both die) and PVP: nobody can be saved.
+        if (!DifficultyRules.CanRevive) return null;
+
         float best = float.MaxValue;
         float limit = reviveRadius * reviveRadius;
         CoopHealth found = null;

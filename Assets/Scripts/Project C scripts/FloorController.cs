@@ -170,6 +170,19 @@ public class FloorController : MonoBehaviour
         FloorChanged = null;
     }
 
+    /// <summary>
+    /// The menus (Level Select, Main Menu) call this. The floor number and the "coming back from the Shop" flag are static, so they outlive
+    /// the scene: a half-finished dungeon run could otherwise make the NEXT scene with a FloorController (a Level Select stage) think it is
+    /// returning from the Shop, jump to that floor's spawn points and check that floor's doors instead of its own.
+    /// </summary>
+    public static void ResetForMenus()
+    {
+        CurrentFloor = 1;
+        IsChangingFloor = false;
+        closedFrame = -1;
+        pendingShopReturn = false;
+    }
+
     // ------------------------------------------------------------ state
 
     private Tilemap[] autoTilemaps;
@@ -217,7 +230,31 @@ public class FloorController : MonoBehaviour
     {
         ApplyActiveFloor(CurrentFloor);
         CheckWiring();
+        WarnIfStartedBlocked();
         if (returningFromShop) StartCoroutine(ChangeFloorRoutine(CurrentFloor, true));
+    }
+
+    // A brand-new scene starts with nothing open. If one of the flags the door check obeys is already on, an earlier scene left it
+    // switched on and the doors can never fire: say so now instead of leaving a silent "doors don't work".
+    private void WarnIfStartedBlocked()
+    {
+        string blocker = CurrentBlocker();
+        if (blocker == null) return;
+
+        Debug.LogWarning("FloorController: this scene started with " + blocker + " already on, so the doors will not fire. Something in the previous scene " +
+                         "(a menu, the pause screen or the Lights Out screen that was open when the scene changed) left it switched on. " +
+                         "Reset it in that script's OnDestroy / Start.", this);
+    }
+
+    // The first thing that stops the door check right now (the order Update checks them in), or null.
+    private static string CurrentBlocker()
+    {
+        if (IsChangingFloor) return "a FLOOR CHANGE is running (IsChangingFloor)";
+        if (PauseController.IsPaused) return "PauseController.IsPaused";
+        if (MenuController.IsOpen) return "MenuController.IsOpen";
+        if (LightsOutScreen.IsActive) return "LightsOutScreen.IsActive";
+        if (LevelResults.IsActive) return "LevelResults.IsActive (the results screen is up)";
+        return null;
     }
 
     private void OnDestroy()
@@ -483,28 +520,28 @@ public class FloorController : MonoBehaviour
         int index = CurrentRowIndex();
         if (index < 0) return;
 
-        FloorLink row = floors[index];
-        if (row == null || row.doors == null || row.doors.Length == 0)
+        FloorDoor[] doors = LiveDoors(index);
+        if (doors == null || doors.Length == 0)
         {
             WarnOnce("nodoors" + index, "FloorController: Floors element " + index + " (floor " + (index + 1) + ") has no doors listed, so the team can't leave it. " +
                                         "Drag that floor's FloorDoor objects into its Doors list.");
             return;
         }
 
-        bool down = FloorDoor.CheckGroup(row.doors, FloorDoor.DoorAction.NextFloor);
-        bool shop = FloorDoor.CheckGroup(row.doors, FloorDoor.DoorAction.Shop);
+        bool down = FloorDoor.CheckGroup(doors, FloorDoor.DoorAction.NextFloor);
+        bool shop = FloorDoor.CheckGroup(doors, FloorDoor.DoorAction.Shop);
         lastDown = down;
         lastShop = shop;
 
         if (!down && !shop)
         {
             doorsArmed = true;   // seen not ready: the next time they ARE ready, they fire
-            WatchDoors(row, false);
+            WatchDoors(doors, false);
             return;
         }
         if (!doorsArmed)
         {
-            WatchDoors(row, true);
+            WatchDoors(doors, true);
             return;
         }
 
@@ -521,6 +558,54 @@ public class FloorController : MonoBehaviour
         {
             if (!LevelResults.TryComplete(CurrentFloor, true, () => TryOpenShop())) TryOpenShop();
         }
+    }
+
+    // True while a Level Select stage (not the dungeon) is being played.
+    private static bool InStageMode()
+    {
+        return PickedPuzzleStage() != null;
+    }
+
+    // The Level Select stage being played, or null (the dungeon). StageLauncher.Current is only filled in by that script's own Start, which can run
+    // AFTER this script's Start, so the pick made in Level Select (StageSelection) is used as well. Both name the same stage.
+    public static StageDefinition PickedPuzzleStage()
+    {
+        StageDefinition stage = StageLauncher.Current;
+        if (stage == null && StageSelection.HasSelection) stage = StageDefinition.Find(StageSelection.StageId);
+        return stage != null && stage.mode == StageMode.Puzzle ? stage : null;
+    }
+
+    private FloorDoor[] stageDoors;
+
+    // The doors the team may use right now. In the dungeon that is the current floor's list. A Level Select stage never changes the floor
+    // number (it stays 1), so a stage's doors would only be looked at if they happened to sit in the FIRST row of Floors. In a stage every
+    // row is searched instead; CheckGroup only counts doors that are switched on, which is the stage the team is standing in.
+    private FloorDoor[] LiveDoors(int index)
+    {
+        if (InStageMode())
+        {
+            if (stageDoors == null) stageDoors = AllListedDoors();
+            return stageDoors;
+        }
+
+        FloorLink row = floors[index];
+        return row != null ? row.doors : null;
+    }
+
+    private FloorDoor[] AllListedDoors()
+    {
+        List<FloorDoor> list = new List<FloorDoor>();
+        for (int i = 0; i < floors.Length; i++)
+        {
+            FloorLink row = floors[i];
+            if (row == null || row.doors == null) continue;
+            for (int d = 0; d < row.doors.Length; d++)
+            {
+                FloorDoor door = row.doors[d];
+                if (door != null && !list.Contains(door)) list.Add(door);
+            }
+        }
+        return list.ToArray();
     }
 
     // ---- "somebody is on a door and nothing happens": say why, once in a while.
@@ -541,19 +626,17 @@ public class FloorController : MonoBehaviour
         int index = CurrentRowIndex();
         sb.Append("  (Floors list has ").Append(floors != null ? floors.Length : 0).Append(" row(s); using row ").Append(index).Append(")");
 
-        string blocker = "none";
-        if (IsChangingFloor) blocker = "a FLOOR CHANGE is running (IsChangingFloor)";
-        else if (PauseController.IsPaused) blocker = "PauseController.IsPaused";
-        else if (MenuController.IsOpen) blocker = "MenuController.IsOpen";
-        else if (LightsOutScreen.IsActive) blocker = "LightsOutScreen.IsActive";
+        string blocker = CurrentBlocker() ?? "none";
         sb.Append("\n   door check blocked by: ").Append(blocker);
+        if (InStageMode()) sb.Append("\n   Level Select stage: the doors of EVERY row are checked (only switched-on ones count)");
         sb.Append("\n   door checks run so far: ").Append(updatesRun);
         sb.Append("\n   doors armed: ").Append(doorsArmed).Append("   last check -> Next Floor group ready: ").Append(lastDown)
           .Append(", Shop group ready: ").Append(lastShop);
 
-        if (index >= 0 && floors[index] != null && floors[index].doors != null)
+        FloorDoor[] reportDoors = index >= 0 ? LiveDoors(index) : null;
+        if (reportDoors != null)
         {
-            sb.Append(FloorDoor.Explain(floors[index].doors));
+            sb.Append(FloorDoor.Explain(reportDoors));
         }
         else
         {
@@ -566,9 +649,9 @@ public class FloorController : MonoBehaviour
     private const float DoorStallRepeatSeconds = 20f;   // and then it is not repeated for this long
     private float doorStallSeconds;
 
-    private void WatchDoors(FloorLink row, bool readyButNotArmed)
+    private void WatchDoors(FloorDoor[] doors, bool readyButNotArmed)
     {
-        if (!logTileUnderPlayer || !FloorDoor.AnyOccupied(row.doors))
+        if (!logTileUnderPlayer || !FloorDoor.AnyOccupied(doors))
         {
             doorStallSeconds = 0f;
             return;
@@ -582,7 +665,7 @@ public class FloorController : MonoBehaviour
             ? "The doors ARE ready, but they were already ready the moment this floor started, so they wait until somebody steps off a door and on again."
             : "The doors are not ready yet:";
         Debug.Log("FloorController: somebody has been standing on a door for " + DoorStallSeconds.ToString("0") + " seconds and the team has not gone down. " +
-                  why + FloorDoor.Explain(row.doors), this);
+                  why + FloorDoor.Explain(doors), this);
     }
 
     // Makes the floor the team has just arrived on the live one: its doors start being checked, the other floors' doors forget
@@ -593,6 +676,9 @@ public class FloorController : MonoBehaviour
         if (floors == null || floors.Length == 0) return;
 
         int active = Mathf.Clamp(floor - 1, 0, floors.Length - 1);
+        // A Level Select stage never changes the floor number (it stays 1), so the stages' rooms sit in OTHER rows. Without this every altar outside
+        // row 1 stayed asleep (RoomAltar waits for Room.IsFloorActive). In a stage every room is live.
+        bool stageMode = InStageMode();
         for (int i = 0; i < floors.Length; i++)
         {
             FloorLink row = floors[i];
@@ -603,7 +689,7 @@ public class FloorController : MonoBehaviour
             if (row.rooms == null) continue;
             for (int r = 0; r < row.rooms.Length; r++)
             {
-                if (row.rooms[r] != null) row.rooms[r].SetFloorActive(i == active);
+                if (row.rooms[r] != null) row.rooms[r].SetFloorActive(stageMode || i == active);
             }
         }
     }

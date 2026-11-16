@@ -106,6 +106,18 @@ public static class LevelRecords
         return null;
     }
 
+    /// <summary>Every id that has a saved record (used by the Level Select log to show where a rank actually went).</summary>
+    public static List<string> SavedIds()
+    {
+        Load();
+        List<string> ids = new List<string>();
+        for (int i = 0; i < data.levels.Count; i++)
+        {
+            if (data.levels[i] != null && !string.IsNullOrEmpty(data.levels[i].id)) ids.Add(data.levels[i].id);
+        }
+        return ids;
+    }
+
     /// <summary>The best rank saved under this id, or RankCalc.NoRank.</summary>
     public static int BestRank(string id)
     {

@@ -69,6 +69,7 @@ public class LevelResults : MonoBehaviour
     public static void OnSceneStart(bool returningFromShop)
     {
         IsActive = false;
+        LockPlayers(false);   // a screen that was up when the last scene closed must not leave anybody frozen
         if (!returningFromShop) run.Clear();
 
         if (!RankSettings.Current.enabled) return;
@@ -97,6 +98,16 @@ public class LevelResults : MonoBehaviour
     public static bool Complete(Action proceed)
     {
         return TryComplete(Mathf.Max(1, FloorController.CurrentFloor), false, proceed);
+    }
+
+    /// <summary>The menus (Level Select, Main Menu) call this: nothing from a finished or abandoned room may stay locked, frozen or half-counted.</summary>
+    public static void ClearStaleState()
+    {
+        IsActive = false;
+        closedFrame = -1;
+        run.Clear();
+        LockPlayers(false);
+        FoeController.Frozen = false;
     }
 
     /// <summary>GameReset calls this when the scores go back to 0 (a Retry, a fresh start): the room's timer and gem count start over too.</summary>
@@ -153,6 +164,7 @@ public class LevelResults : MonoBehaviour
             // The scene is going away with a screen up: nothing may stay locked or frozen.
             IsActive = false;
             closedFrame = Time.frameCount;
+            LockPlayers(false);   // RETRY / LEVEL SELECT / NEXT LEVEL leave through here and never unlocked the players
             FoeController.Frozen = false;
         }
     }
@@ -306,8 +318,8 @@ public class LevelResults : MonoBehaviour
     {
         LevelInfo info = new LevelInfo();
 
-        StageDefinition stage = StageLauncher.Current;
-        if (stage != null && stage.mode == StageMode.Puzzle)
+        StageDefinition stage = FloorController.PickedPuzzleStage();   // StageLauncher.Current, or the stage picked in Level Select
+        if (stage != null)
         {
             List<StageDefinition> list = PuzzleStages();
             int index = list.IndexOf(stage);
@@ -388,6 +400,7 @@ public class LevelResults : MonoBehaviour
         }
 
         LevelRecords.Outcome outcome = LevelRecords.Submit(level.id, attempt);
+        Debug.Log("LevelResults: saved '" + level.id + "' as rank " + RankCalc.Letter((int)rank) + (outcome.newBestRank ? " (new best rank)" : "") + ".", this);
 
         if (!level.stageMode)
         {

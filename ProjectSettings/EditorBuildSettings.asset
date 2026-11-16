@@ -5,37 +5,16 @@ EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
   m_Scenes:
-  - enabled: 0
-    path: Assets/Scenes 1/Demos/Demo1.unity
-    guid: 829a86ba161cdd840842063447f41aab
+  - enabled: 1
+    path: Assets/Scenes/Puzzle.unity
+    guid: c5884daf12b5f8b41b97972e02a81440
   - enabled: 1
     path: Assets/Scenes/Mainmenu.unity
-    guid: b3306162c12045d48b33026cfa7124a2
-  - enabled: 0
-    path: Assets/Scenes/Investigation.unity
-    guid: 15ac6c753f1e2ed459de2340748b0bcc
-  - enabled: 0
-    path: Assets/Scenes/Interrogation.unity
-    guid: a42608ec20f486545a84ba7166de57e4
-  - enabled: 0
-    path: Assets/Scenes/Accusation.unity
-    guid: adf1b7023639b3c49998f7488fe0f805
-  - enabled: 0
-    path: Assets/Scenes 1/Investigation Beta.unity
-    guid: 8c13838df8e680749ae1bb30cfe63339
-  - enabled: 0
-    path: Assets/Scenes 1/Investigation Scrapped.unity
-    guid: 47504c0bf83198c40bfec9467d132972
+    guid: dc02ec95a9d17864d98a41175147f2cd
   - enabled: 1
-    path: Assets/Scenes/Ending.unity
-    guid: 769de876824bc4f4ab46b749d06271f9
-  - enabled: 1
-    path: Assets/Scenes/FailureEnding.unity
-    guid: cc2831cd370bedb4da78998710721a0f
-  - enabled: 1
-    path: Assets/Scenes/Crawler.unity
-    guid: 0a51a31480a84174eab22a802b5dd0d8
-  - enabled: 1
-    path: Assets/_Recovery/LevelSelect.unity
-    guid: c1ead893815e42c3b3d6ba5bea61b932
-  m_configObjects: {}
+    path: Assets/Scenes/LevelSelect.unity
+    guid: 2dd65de6973719b4d944109df01563c8
+  m_configObjects:
+    com.unity.adaptivePerformance.basic.provider_settings: {fileID: 11400000, guid: d11f8ff40c1a7cd4aa8ddc3a784c47bb, type: 2}
+    com.unity.adaptiveperformance.loader_settings: {fileID: 11400000, guid: 217fc92089a6f454694c7afb00496849, type: 2}
+    com.unity.adaptiveperformance.simulator.provider_settings: {fileID: 11400000, guid: 0f98bc2bb0607de48b2e1c52738ca8e2, type: 2}

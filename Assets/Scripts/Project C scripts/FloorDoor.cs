@@ -15,7 +15,8 @@ using Ilumisoft.HealthSystem;
 ///   3. (Optional) drag the door's sprite(s) into Sprites. Left empty, every SpriteRenderer under the door is tinted.
 ///
 /// THE RULE (checked by FloorController, every frame, for the doors of the floor the team is on; see CheckGroup):
-///   - Available players: every player that counts (CoopRules.Counts) and is alive.
+///   - Players: every player that counts (CoopRules.Counts). ALL of them must make it: a player who is knocked down (0 health) keeps
+///     the doors shut until they are revived or have respawned, so the team never goes down a floor without them.
 ///   - Available doors: the doors of this floor that are switched on. Switch a door off to make it unavailable.
 ///   - Every available player must stand on a door, and the players must fill the doors: with 2 players and 2 doors, one
 ///     on each. With fewer players than doors (single player mode) only as many doors as there are players are needed.
@@ -94,13 +95,18 @@ public class FloorDoor : MonoBehaviour
         }
         if (group.Count == 0) return false;
 
-        // The available players.
+        // EVERY player that counts has to make it, including one who is knocked down (0 health) or waiting to respawn. A downed player can't
+        // stand on a door, so they stay in the head count but never get a door: "placed" can't reach "players" and the doors stay shut until
+        // they are revived or have respawned. (Before, a downed player was dropped from the count, so the one who was still up could
+        // fire the door alone and the team went down a floor with a partner lying behind.)
+        // Only living players can be placed on a door (and see their colour on it).
         int players = 0;
         for (int n = 1; n <= MaxPlayers; n++)
         {
             CoopHealth p = CoopHealth.Get(n);
-            available[n] = p != null && p.IsAlive && CoopRules.Counts(n);
-            if (available[n]) players++;
+            bool counts = p != null && CoopRules.Counts(n);
+            available[n] = counts && p.IsAlive;
+            if (counts) players++;
             doorOf[n] = -1;
             nearest[n] = float.MaxValue;
         }
@@ -187,7 +193,7 @@ public class FloorDoor : MonoBehaviour
 
             sb.Append("\n   Player ").Append(n).Append(": ");
             if (!CoopRules.Counts(n)) { sb.Append("does not count (single player mode), so they are ignored"); continue; }
-            if (!p.IsAlive) { sb.Append("is at 0 health (knocked down), so they are not counted as available"); continue; }
+            if (!p.IsAlive) { sb.Append("is at 0 health (knocked down or respawning), so they can't stand on a door and the doors stay shut until they are revived or back"); continue; }
 
             int door = -1;
             for (int i = 0; doors != null && i < doors.Length; i++)

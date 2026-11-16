@@ -43,7 +43,8 @@ using UnityEngine.InputSystem.Controls;
 ///                       random ones from starting again, so none of it is heard once the menu is gone.
 ///   Silence             while the screen is up the music is faded out and held (MusicManager and MusicPlayer, without touching the player's
 ///                       Music On/Off setting) and looping sounds from other objects are paused, so only the Lights Out sounds are heard. All of
-///                       it comes back on Retry (or when the screen is gone).
+///                       it comes back on Retry (or when the screen is gone). The song that was playing is paused, not dropped, so it fades back in
+///                       from where it stopped (never track 1), and a music object that appears while the screen is up is held as well.
 ///
 /// While it is up: players are locked, foes are frozen, Time.timeScale is 0, hazards and doors do nothing, pausing is switched off, and the
 /// mouse cursor is freed. All of that is put back when the screen is gone.
@@ -89,7 +90,8 @@ public class LightsOutScreen : MonoBehaviour
     [SerializeField] private AudioClip lightsOutClip;
     [Tooltip("This sound's own level.")]
     [SerializeField, Range(0f, 1f)] private float lightsOutVolume = 1f;
-    [Tooltip("Seconds (real time) after the last player goes down before the clip starts. 0 = the instant they are all down. " +
+    [Tooltip("Seconds (real time) after the last player goes down before the clip starts. 0 = as soon as the music has finished fading out " +
+             "(Music Fade Out Time), never before, so the two can't overlap. " +
              "Set it to the same number as Delay Before Fade (below) to start the clip just as the screen begins to go dark.")]
     [SerializeField, Min(0f)] private float lightsOutSoundDelay = 0f;
     [Tooltip("ON: the clip repeats (with no gap) until Retry, Level Select or Menu is picked. OFF: it plays once.")]
@@ -133,7 +135,7 @@ public class LightsOutScreen : MonoBehaviour
     [SerializeField] private bool silenceMusic = true;
     [Tooltip("Seconds the music takes to fade out when the last player goes down.")]
     [SerializeField, Min(0f)] private float musicFadeOutTime = 0.75f;
-    [Tooltip("Seconds the music takes to fade back in after Retry (MusicManager only; MusicPlayer comes back at once).")]
+    [Tooltip("Seconds the music takes to fade back in after Retry, from the point in the song where it stopped (MusicManager and MusicPlayer).")]
     [SerializeField, Min(0f)] private float musicFadeInTime = 1.5f;
     [Tooltip("ON: any other sound that is looping (a campfire, an ambience track...) is paused while the screen is up and carries on after Retry. " +
              "One-shot sounds (hits, footsteps) are left to finish.")]
@@ -263,12 +265,12 @@ public class LightsOutScreen : MonoBehaviour
     private Coroutine _mainRoutine;
     private Coroutine _randomRoutine;
     private Coroutine _fadeRoutine;
-    private Coroutine _loopSweepRoutine;
+    private Coroutine _quietRoutine;      // keeps the music held and the loops paused while the screen is up
     private int _lastRandomSound = -1;
 
     private bool _otherAudioHeld;       // the music and other loops are being kept quiet
-    private MusicManager _heldMusicManager;
-    private MusicPlayer _heldMusicPlayer;
+    private readonly List<MusicManager> _heldMusicManagers = new List<MusicManager>();   // everything Hold was called on, so Release reaches the same ones
+    private readonly List<MusicPlayer> _heldMusicPlayers = new List<MusicPlayer>();
     private readonly List<AudioSource> _pausedLoops = new List<AudioSource>();
 
     private float _wipeSeenSince = -1f;   // when every player was first seen at 0 health without the screen starting (PollTeamWipe)
@@ -407,7 +409,10 @@ public class LightsOutScreen : MonoBehaviour
 
     private IEnumerator PlayLightsOutSound()
     {
-        if (lightsOutSoundDelay > 0f) yield return new WaitForSecondsRealtime(lightsOutSoundDelay);
+        // Never before the music has finished fading out, so the music and this sound can't overlap.
+        float wait = lightsOutSoundDelay;
+        if (silenceMusic) wait = Mathf.Max(wait, musicFadeOutTime);
+        if (wait > 0f) yield return new WaitForSecondsRealtime(wait);
         _mainRoutine = null;
         if (_soundsStopped || _audio == null || lightsOutClip == null || !GameSettings.SoundOn) yield break;
 
@@ -444,7 +449,9 @@ public class LightsOutScreen : MonoBehaviour
 
     private IEnumerator RandomSoundsRoutine()
     {
-        if (randomSoundDelay > 0f) yield return new WaitForSecondsRealtime(randomSoundDelay);
+        float wait = randomSoundDelay;
+        if (silenceMusic) wait = Mathf.Max(wait, musicFadeOutTime);   // never over the fading music
+        if (wait > 0f) yield return new WaitForSecondsRealtime(wait);
 
         while (!_soundsStopped)
         {
@@ -557,16 +564,28 @@ public class LightsOutScreen : MonoBehaviour
         if (_otherAudioHeld) return;
         _otherAudioHeld = true;
 
-        if (silenceMusic)
-        {
-            _heldMusicManager = MusicManager.Instance;
-            if (_heldMusicManager != null) _heldMusicManager.Hold(musicFadeOutTime);
+        // The first pass runs right now (the music starts fading this very frame); the routine then looks again a few times a second.
+        if (silenceMusic || silenceOtherLoops) _quietRoutine = StartCoroutine(KeepQuietRoutine());
+    }
 
-            _heldMusicPlayer = MusicPlayer.Instance;
-            if (_heldMusicPlayer != null) _heldMusicPlayer.Hold(musicFadeOutTime);
+    // Holds the music objects that exist right now. It runs again on every pass of KeepQuietRoutine, so a music object that appears or starts
+    // while the screen is up (a copy that loaded with the scene, one that was switched back on) is held too, instead of playing its first
+    // track over the Lights Out sound.
+    private void HoldMusic()
+    {
+        MusicManager manager = MusicManager.Instance;
+        if (manager != null && !_heldMusicManagers.Contains(manager))
+        {
+            _heldMusicManagers.Add(manager);
+            manager.Hold(musicFadeOutTime);
         }
 
-        if (silenceOtherLoops) _loopSweepRoutine = StartCoroutine(SilenceLoopsRoutine());
+        MusicPlayer player = MusicPlayer.Instance;
+        if (player != null && !_heldMusicPlayers.Contains(player))
+        {
+            _heldMusicPlayers.Add(player);
+            player.Hold(musicFadeOutTime);
+        }
     }
 
     // Puts the music and the paused loops back. Safe to call twice.
@@ -575,7 +594,7 @@ public class LightsOutScreen : MonoBehaviour
         if (!_otherAudioHeld) return;
         _otherAudioHeld = false;
 
-        if (_loopSweepRoutine != null) { StopCoroutine(_loopSweepRoutine); _loopSweepRoutine = null; }
+        if (_quietRoutine != null) { StopCoroutine(_quietRoutine); _quietRoutine = null; }
 
         for (int i = 0; i < _pausedLoops.Count; i++)
         {
@@ -583,31 +602,46 @@ public class LightsOutScreen : MonoBehaviour
         }
         _pausedLoops.Clear();
 
-        if (_heldMusicManager != null) _heldMusicManager.Release(musicFadeInTime);
-        if (_heldMusicPlayer != null) _heldMusicPlayer.Release();
-        _heldMusicManager = null;
-        _heldMusicPlayer = null;
+        // The song that was playing fades back in from where it stopped.
+        for (int i = 0; i < _heldMusicManagers.Count; i++)
+        {
+            if (_heldMusicManagers[i] != null) _heldMusicManagers[i].Release(musicFadeInTime);
+        }
+        for (int i = 0; i < _heldMusicPlayers.Count; i++)
+        {
+            if (_heldMusicPlayers[i] != null) _heldMusicPlayers[i].Release(musicFadeInTime);
+        }
+        _heldMusicManagers.Clear();
+        _heldMusicPlayers.Clear();
     }
 
-    // Pauses every looping sound that isn't ours or a music player's, and looks again a few times a second for ones that start later.
-    // One-shots (hits, footsteps) are left alone: they finish by themselves, and pausing them would replay their tails after the Retry.
-    private IEnumerator SilenceLoopsRoutine()
+    // While the screen is up: holds the music (including any music object that shows up late) and pauses the other loops, and looks again
+    // a few times a second.
+    private IEnumerator KeepQuietRoutine()
     {
         while (true)
         {
-            AudioSource[] all = FindObjectsByType<AudioSource>(FindObjectsSortMode.None);
-            for (int i = 0; i < all.Length; i++)
-            {
-                AudioSource source = all[i];
-                if (source == null || !source.isPlaying || !source.loop) continue;
-                if (source.transform.IsChildOf(transform)) continue;   // this screen's own sounds
-                if (source.GetComponent<MusicManager>() != null || source.GetComponent<MusicPlayer>() != null) continue;   // those go through Hold
-
-                source.Pause();
-                _pausedLoops.Add(source);
-            }
+            if (silenceMusic) HoldMusic();
+            if (silenceOtherLoops) PauseLoops();
 
             yield return new WaitForSecondsRealtime(0.25f);
+        }
+    }
+
+    // Pauses every looping sound that isn't ours or a music player's.
+    // One-shots (hits, footsteps) are left alone: they finish by themselves, and pausing them would replay their tails after the Retry.
+    private void PauseLoops()
+    {
+        AudioSource[] all = FindObjectsByType<AudioSource>(FindObjectsSortMode.None);
+        for (int i = 0; i < all.Length; i++)
+        {
+            AudioSource source = all[i];
+            if (source == null || !source.isPlaying || !source.loop) continue;
+            if (source.transform.IsChildOf(transform)) continue;   // this screen's own sounds
+            if (source.GetComponent<MusicManager>() != null || source.GetComponent<MusicPlayer>() != null) continue;   // those go through Hold
+
+            source.Pause();
+            _pausedLoops.Add(source);
         }
     }
 

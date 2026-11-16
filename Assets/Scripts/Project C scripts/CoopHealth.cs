@@ -17,6 +17,8 @@ namespace Ilumisoft.HealthSystem
     ///   Grace                       the same, owned by CoopDowned: a short safe moment after a revive or a respawn.
     ///   Airborne                    the same, but owned by the jump: TopDownJump sets it in the air and clears it on landing. It is a
     ///                               separate flag so landing can never switch the invincibility power-up off.
+    ///   Hard difficulty             (DifficultyRules.LinkedDeath) when one player dies, every other player that counts dies with them. A pit fall
+    ///                               is ForceKill, which skips this: a fall is a respawn, not a death.
     ///
     /// Helpers for other scripts:
     ///   CoopHealth.Nearest(position)   the closest living player that counts (foes: "who do I chase / hit?")
@@ -132,6 +134,9 @@ namespace Ilumisoft.HealthSystem
 
             base.ApplyDamage(damage);
 
+            // Hard: this hit killed them, so the rest go down with them.
+            if (!_mirroring && !IsAlive && DifficultyRules.LinkedDeath) KillTheRest();
+
             if (_mirroring || !CoopRules.SharedDamage) return;
 
             _mirroring = true;
@@ -146,6 +151,29 @@ namespace Ilumisoft.HealthSystem
             finally
             {
                 _mirroring = false;
+            }
+        }
+
+        /// <summary>
+        /// Kills THIS player right now, and only this player. Invincible, Airborne, Grace and Single Player Mode do not stop it, and the hit is NOT
+        /// passed on to the other players (Shared Damage), because a fall into a pit is not a hit. Used by CoopDowned when a player falls.
+        /// Does nothing if the player is already dead.
+        /// </summary>
+        public void ForceKill()
+        {
+            if (!IsAlive) return;
+
+            // base.ApplyDamage skips every check in the override above (and the mirroring), so it always goes through.
+            base.ApplyDamage(Mathf.Max(CurrentHealth, 1f) + 1f);
+        }
+
+        // Hard difficulty: this player just died, so every other player that counts and is still alive dies with them. ForceKill: Invincible, Airborne
+        // and Grace don't save them, and it isn't passed round as a hit. The last one to fall raises TeamWiped through HandleEmpty as usual.
+        private void KillTheRest()
+        {
+            foreach (CoopHealth other in Players.ToArray())
+            {
+                if (other != null && other != this && other.IsAlive && CoopRules.Counts(other.PlayerNumber)) other.ForceKill();
             }
         }
 

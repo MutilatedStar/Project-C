@@ -39,8 +39,13 @@ using Ilumisoft.HealthSystem;
 ///   lava    hurts the players listed in "Lava Hurts" (Player 1, blue, by default); any tile with "lava" in its name
 ///   water   hurts the players listed in "Water Hurts" (Player 2, orange, by default); any tile with "water" in its name
 ///   spikes  hurt EVERY player, massively, but only while the spike tile shows a frame that is not in "Safe Spike Frames"
-///           (frames 0 and 1 by default, so only spike-trap-16px_strip8_2 to _7 hurt). Players are hurt through
+///           (frames 0 and 1 by default, so only spike-trap-16px_strip8_2 to _7 hurt). Spikes are read from "Spike Tilemaps" (empty = every
+///           Tilemap in the scene), NOT from "Hazard Tilemaps", and at the player's feet as well as the middle of their collider. If the frame number of a spike tile never changes
+///           (it isn't animated, or Unity doesn't report its animation), the frames can't be told apart, so every spike tile hurts and a
+///           warning is printed (Spike Stuck Seconds). Players are hurt through
 ///           CoopHealth.ApplyDamage, so Invincible and the CoopRules (Shared Damage, Single Player Mode) still apply.
+///           The damage numbers below are the MEDIUM values: every hit is multiplied by DifficultyRules.TrapDamageScale
+///           (Easy x0.5, Medium x1, Hard x2; PVP always counts as Easy).
 ///
 /// A player who is jumping (CoopHealth.Airborne) is skipped: they fly over lava, water and spikes, and a spike's cooldown isn't used up on a hit
 /// that would do nothing. The moment they land, the tile under them is read again.
@@ -119,12 +124,22 @@ public class FloorManager : MonoBehaviour
     [Header("Spikes (hurt every player)")]
     [Tooltip("A tile counts as a spike trap when its name contains this.")]
     [SerializeField] private string spikeName = "spike-trap";
+    [Tooltip("Tilemaps to check for spike tiles. Leave EMPTY to check every Tilemap in the scene (re-checked once a second). This is NOT the Hazard Tilemaps list above: " +
+             "that one is for lava and water, so spikes on their own Tilemap (for example 'Traps') are found even when it only lists the lava and water map.")]
+    [SerializeField] private Tilemap[] spikeTilemaps;
     [Tooltip("Spike frames that do NOTHING: the number at the end of the sprite name (spike-trap-16px_strip8_0 is frame 0). Every other frame hurts. Default 0 and 1 are the harmless ones.")]
     [SerializeField] private int[] safeSpikeFrames = { 0, 1 };
     [Tooltip("Damage of one spike hit. Make it as big as or bigger than the players' max health for an instant kill.")]
     [SerializeField, Min(0f)] private float spikeDamage = 100f;
     [Tooltip("After a spike hits a player it can't hit that same player again for this long, so one trap going off doesn't hit once per frame of its animation.")]
     [SerializeField, Min(0f)] private float spikeCooldown = 1f;
+    [Tooltip("Safety net for Safe Spike Frames. The script watches the frame number of one spike tile per Tilemap. If that number never changes for this many seconds, " +
+             "the animation can't be read (the tile isn't animated, or Unity doesn't report its animation), so Safe Spike Frames would keep the spikes harmless forever. " +
+             "Then every spike tile hurts on every frame and a warning is printed. Set it above the time one animation frame stays on screen. 0 = off.")]
+    [SerializeField, Min(0f)] private float spikeStuckSeconds = 3f;
+    [Tooltip("Prints a Console line (at most once a second per player) while a player stands on a spike tile: tile and sprite names, the frame that was read, and whether it hurts. " +
+             "Nothing printed while a player stands on spikes = this script does not see those tiles at all.")]
+    [SerializeField] private bool logSpikeReads = true;
 
     [Header("Stray foe check")]
     [Tooltip("Turn the removal of foes that are somewhere invalid on or off. (The spawn-time check stays active either way.)")]
@@ -153,6 +168,21 @@ public class FloorManager : MonoBehaviour
     private readonly CoopHealth[] playerColliderOwners = new CoopHealth[MaxPlayers + 1];
     private Tilemap[] autoHazardMaps;
     private float nextHazardMapRefresh;
+    private readonly float[] nextSpikeLogTime = new float[MaxPlayers + 1];   // per player number: when the next spike Console line may print
+
+    // One watched spike tile per Tilemap: is the frame number we read from it really changing?
+    private sealed class SpikeProbe
+    {
+        public bool searched;     // a scan for a spike tile has been done on this Tilemap (found or not)
+        public bool found;
+        public Vector3Int cell;
+        public TileBase tile;     // what was at the cell when it was picked; a different tile there means the map was repainted
+        public int lastFrame = -2;
+        public float changedAt;   // Time.time when the frame number last changed
+        public bool warned;
+    }
+    private readonly Dictionary<Tilemap, SpikeProbe> spikeProbes = new Dictionary<Tilemap, SpikeProbe>();
+    private bool warnedNoSpikeTiles;
 
     // ------------------------------------------------------------ setup
 
@@ -216,6 +246,7 @@ public class FloorManager : MonoBehaviour
         handledFloor = floor;
 
         invalidSince.Clear();
+        spikeProbes.Clear();   // the new floor may have other spike tiles: watch them afresh
 
         // Went down from the last floor: the run is won. No new level starts, and nothing listening to OnFloorChanged
         // gets a floor number that has no data behind it.
@@ -370,14 +401,34 @@ public class FloorManager : MonoBehaviour
 
             bool onLava;
             bool onWater;
-            bool onSpike;
             string detail;
-            ReadHazardTiles(HazardPoint(n, p), out onLava, out onWater, out onSpike, out detail);
+            Vector2 point = HazardPoint(n, p);
+            ReadHazardTiles(point, out onLava, out onWater, out detail);
+
+            // Spikes are read at the hazard point AND at the player's own position (their feet): the middle of the collider can sit one
+            // tile above the spike they are standing on.
+            string spikeNote;
+            string spikeDetail;
+            bool onSpike = ReadSpikes(point, out spikeNote, out spikeDetail);
+            if (!onSpike)
+            {
+                string footNote;
+                string footDetail;
+                onSpike = ReadSpikes((Vector2)p.transform.position, out footNote, out footDetail);
+                if (footNote != null) spikeNote = footNote;
+                if (onSpike) spikeDetail = footDetail;
+            }
+
+            if (spikeNote != null && logSpikeReads && Time.time >= nextSpikeLogTime[n])
+            {
+                nextSpikeLogTime[n] = Time.time + 1f;
+                Debug.Log("FloorManager: Player " + n + " stands on a spike tile: " + spikeNote + ".", p);
+            }
 
             if (onSpike && Time.time >= nextSpikeTime[n])
             {
                 nextSpikeTime[n] = Time.time + spikeCooldown;
-                HurtByHazard(p, spikeDamage, "spikes", detail);
+                HurtByHazard(p, spikeDamage, "spikes", spikeDetail);
                 if (!p.IsAlive) continue;
             }
 
@@ -396,6 +447,7 @@ public class FloorManager : MonoBehaviour
 
     private void HurtByHazard(CoopHealth player, float amount, string source, string detail)
     {
+        amount *= DifficultyRules.TrapDamageScale;   // Easy 0.5x, Medium 1x, Hard 2x (PVP counts as Easy)
         if (amount <= 0f) return;
 
         if (logHazards)
@@ -405,12 +457,11 @@ public class FloorManager : MonoBehaviour
         player.ApplyDamage(amount);   // goes through CoopHealth: Invincible and the CoopRules still apply
     }
 
-    // Looks at every hazard tilemap under one point and says what is there.
-    private void ReadHazardTiles(Vector2 point, out bool onLava, out bool onWater, out bool onSpike, out string detail)
+    // Looks at every hazard tilemap under one point and says whether lava or water is there.
+    private void ReadHazardTiles(Vector2 point, out bool onLava, out bool onWater, out string detail)
     {
         onLava = false;
         onWater = false;
-        onSpike = false;
         detail = "";
 
         Tilemap[] maps = HazardMaps();
@@ -439,25 +490,173 @@ public class FloorManager : MonoBehaviour
                 onWater = true;
                 detail = names;
             }
-            if (NameHas(tile.name, spikeName) || NameHas(spriteName, spikeName))
-            {
-                int frame = SpikeFrame(map, cell, spriteName);
-                if (!Listed(safeSpikeFrames, frame))
-                {
-                    onSpike = true;
-                    detail = names + ", frame " + frame;
-                }
-            }
         }
     }
 
-    // Which frame of the spike is showing right now. An Animated Tile always reports ONE fixed picture through GetSprite, so for
-    // those the current frame comes from the animation itself (frame 0 = its first picture: keep the pictures in _0, _1, _2...
-    // order). A tile that isn't animated uses the number at the end of its sprite name. -1 = no number found (it hurts).
-    private static int SpikeFrame(Tilemap map, Vector3Int cell, string spriteName)
+    // Looks at every spike tilemap under one point. True when a spike there hurts right now. note is set whenever ANY spike tile is under the
+    // point (hurting or not), for the Console line; detail says which tile hurt.
+    private bool ReadSpikes(Vector2 point, out string note, out string detail)
     {
-        if (map.GetAnimationFrameCount(cell) > 1) return map.GetAnimationFrame(cell);
-        return FrameNumber(spriteName);
+        note = null;
+        detail = "";
+        bool hurts = false;
+
+        Tilemap[] maps = SpikeMaps();
+        for (int i = 0; i < maps.Length; i++)
+        {
+            Tilemap map = maps[i];
+            if (map == null) continue;
+
+            Vector3Int cell = map.WorldToCell(point);
+            cell.z = 0;
+
+            TileBase tile = map.GetTile(cell);
+            if (tile == null) continue;
+
+            Sprite shown = map.GetSprite(cell);
+            string spriteName = shown != null ? shown.name : "";
+            if (!NameHas(tile.name, spikeName) && !NameHas(spriteName, spikeName)) continue;
+
+            int frame = RawSpikeFrame(map, cell);
+            bool readable = SpikeFramesReadable(map);
+            bool thisHurts = !readable || !Listed(safeSpikeFrames, frame);
+            string names = "Tilemap '" + map.name + "', tile '" + tile.name + "', sprite '" + spriteName + "'";
+
+            note = names + ", frame read " + frame +
+                   (thisHurts ? " -> hurts" : " -> safe frame, no damage") +
+                   (readable ? "" : " (the frame number never changes, so Safe Spike Frames are ignored)");
+
+            if (thisHurts)
+            {
+                hurts = true;
+                detail = names + ", frame " + frame;
+            }
+        }
+        return hurts;
+    }
+
+    // Which frame of the spike the game shows right now: the number at the end of the sprite the Tilemap reports ("spike-trap-16px_strip8_3" -> 3).
+    // If the sprite name has no number, the animation frame of an Animated Tile is used instead. -1 = neither is available.
+    // Whether the number is really LIVE is what the spike probe below checks.
+    private static int RawSpikeFrame(Tilemap map, Vector3Int cell)
+    {
+        Sprite shown = map.GetSprite(cell);
+        int named = FrameNumber(shown != null ? shown.name : "");
+        if (named >= 0) return named;
+
+        return map.GetAnimationFrameCount(cell) > 1 ? map.GetAnimationFrame(cell) : -1;
+    }
+
+    private bool IsSpikeTile(Tilemap map, Vector3Int cell)
+    {
+        TileBase tile = map.GetTile(cell);
+        if (tile == null) return false;
+        if (NameHas(tile.name, spikeName)) return true;
+
+        Sprite shown = map.GetSprite(cell);
+        return shown != null && NameHas(shown.name, spikeName);
+    }
+
+    // False when the frame number of this Tilemap's spikes has been frozen for Spike Stuck Seconds: it can't be trusted to say "retracted".
+    private bool SpikeFramesReadable(Tilemap map)
+    {
+        if (spikeStuckSeconds <= 0f) return true;
+
+        SpikeProbe probe;
+        if (!spikeProbes.TryGetValue(map, out probe) || !probe.found) return true;   // nothing watched yet: trust the number
+        return Time.time - probe.changedAt < spikeStuckSeconds;
+    }
+
+    // Every frame: watch one spike tile per Tilemap and note when its frame number last changed (Time.time, so a pause doesn't count as frozen).
+    private void UpdateSpikeProbes()
+    {
+        if (spikeStuckSeconds <= 0f) return;
+
+        Tilemap[] maps = SpikeMaps();
+        bool anyFound = false;
+        bool allSearched = maps.Length > 0;
+
+        for (int i = 0; i < maps.Length; i++)
+        {
+            Tilemap map = maps[i];
+            if (map == null) continue;
+
+            SpikeProbe probe;
+            if (!spikeProbes.TryGetValue(map, out probe))
+            {
+                probe = new SpikeProbe();
+                spikeProbes.Add(map, probe);
+            }
+
+            if (!probe.found)
+            {
+                if (probe.searched) continue;   // this map has no spike tile (a new floor clears the probes and looks again)
+                probe.searched = true;
+
+                foreach (Vector3Int cell in map.cellBounds.allPositionsWithin)
+                {
+                    if (!IsSpikeTile(map, cell)) continue;
+
+                    probe.found = true;
+                    probe.cell = cell;
+                    probe.tile = map.GetTile(cell);
+                    probe.lastFrame = -2;
+                    probe.changedAt = Time.time;
+                    probe.warned = false;
+
+                    Debug.Log("FloorManager: spikes are read from Tilemap '" + map.name + "' (watching the spike tile at " + cell + ", tile '" + probe.tile.name +
+                              "'). Spikes are looked for on " + (spikeTilemaps != null && spikeTilemaps.Length > 0 ? "the Tilemaps in Spike Tilemaps" : "every Tilemap in the scene") + ".", map);
+                    break;
+                }
+                if (!probe.found) continue;
+            }
+
+            anyFound = true;
+
+            TileBase now = map.GetTile(probe.cell);
+            if (now != probe.tile)
+            {
+                if (IsSpikeTile(map, probe.cell))
+                {
+                    probe.tile = now;         // the same spot, a refreshed tile object: keep watching
+                }
+                else
+                {
+                    probe.found = false;      // the map was repainted: pick a new spike tile next frame
+                    probe.searched = false;
+                    continue;
+                }
+            }
+
+            int frame = RawSpikeFrame(map, probe.cell);
+            if (frame != probe.lastFrame)
+            {
+                probe.lastFrame = frame;
+                probe.changedAt = Time.time;
+                probe.warned = false;
+            }
+            else if (!probe.warned && Time.time - probe.changedAt >= spikeStuckSeconds)
+            {
+                probe.warned = true;
+                Debug.LogWarning("FloorManager: the spike tile at " + probe.cell + " on Tilemap '" + map.name + "' has shown frame " + frame +
+                                 " for " + spikeStuckSeconds + "s without changing (animation frames: " + map.GetAnimationFrameCount(probe.cell) +
+                                 "). The animation can't be read from this tile, so Safe Spike Frames are ignored and every spike tile on it hurts.", map);
+            }
+        }
+
+        // Every Tilemap has been scanned and not one has a spike tile: say so once, so "no damage" can't be a silent mystery.
+        if (!anyFound && allSearched && !warnedNoSpikeTiles)
+        {
+            for (int i = 0; i < maps.Length; i++)
+            {
+                SpikeProbe check;
+                if (maps[i] != null && (!spikeProbes.TryGetValue(maps[i], out check) || !check.searched)) return;
+            }
+            warnedNoSpikeTiles = true;
+            Debug.LogWarning("FloorManager: no spike tile was found on any Tilemap (looking for '" + spikeName + "' in the tile asset name or the sprite name). " +
+                             "If this floor has spikes, set Spike Name to part of their tile or sprite name" +
+                             (spikeTilemaps != null && spikeTilemaps.Length > 0 ? ", and check the Tilemaps listed in Spike Tilemaps." : "."), this);
+        }
     }
 
     // The number at the very end of a name: "spike-trap-16px_strip8_2" -> 2.
@@ -502,7 +701,18 @@ public class FloorManager : MonoBehaviour
     private Tilemap[] HazardMaps()
     {
         if (hazardTilemaps != null && hazardTilemaps.Length > 0) return hazardTilemaps;
+        return AllSceneMaps();
+    }
 
+    // Spikes have their own list, so a Hazard Tilemaps list that only names the lava / water map can't hide them.
+    private Tilemap[] SpikeMaps()
+    {
+        if (spikeTilemaps != null && spikeTilemaps.Length > 0) return spikeTilemaps;
+        return AllSceneMaps();
+    }
+
+    private Tilemap[] AllSceneMaps()
+    {
         if (autoHazardMaps == null || Time.unscaledTime >= nextHazardMapRefresh)
         {
             autoHazardMaps = FindObjectsByType<Tilemap>(FindObjectsSortMode.None);
@@ -570,7 +780,11 @@ public class FloorManager : MonoBehaviour
 
     private void Update()
     {
-        if (hazardsEnabled) CheckHazards();
+        if (hazardsEnabled)
+        {
+            UpdateSpikeProbes();
+            CheckHazards();
+        }
 
         if (!removeStrayFoes || Time.time < nextCheckTime) return;
         nextCheckTime = Time.time + checkInterval;
