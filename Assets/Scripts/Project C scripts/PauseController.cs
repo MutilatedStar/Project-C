@@ -62,9 +62,15 @@ using UnityEngine.InputSystem.Controls;
 /// It does NOT open (the key does nothing) when:
 ///   - the stairs menu is up or a floor change is running. P / Esc close the stairs menu first (FloorController does that); pressing again
 ///     then opens this pause.
-///   - the Lights Out screen is up.
+///   - the Lights Out screen is up. It counts as up from the very moment the team is wiped, not only once it has faded in.
 ///   - the notebook (MenuController) is open, or was closed on this very press.
-///   - the player is dead.
+///   - the rank screen (LevelResults) is up.
+///   - a PVP round or match has been decided (the round banner and the match result screen are up or on their way).
+///   - the team is dead: every player that counts is at 0 health. (Block While Any Player Down also blocks it while just one of them is down.)
+/// The same rules guard Pause() itself, so a HUD button or any other script that calls it can't open the menu over a death either.
+/// If the team is wiped while the menu is open (the killing hit lands on the very frame P is pressed), the menu closes by itself and the game-over
+/// screen takes over. The two screens must never be up together: both of them own Time.timeScale, and a pause that is still "open" behind the
+/// game-over screen holds the time at 0 after Retry, which is the soft-lock where the players can steer but the world doesn't move.
 ///
 /// Other scripts can read:  PauseController.IsPaused,  PauseController.BlocksInput.   They can call:  Pause(),  Resume(),  QuitToMainMenu().
 ///
@@ -171,8 +177,9 @@ public class PauseController : MonoBehaviour
     [SerializeField, Min(1)] private int fallbackTrackCount = 7;
 
     [Header("Sound (optional, follows the Sound Effects setting)")]
-    [Tooltip("ON: every other sound is paused while the menu is up and carries on after (AudioListener.pause). The music is NOT paused " +
-             "(MusicManager and MusicPlayer ignore it), so the music settings can be heard. OFF: only time is frozen, sounds keep playing.")]
+    [Tooltip("ON: every world sound that is playing when the menu opens is paused, and exactly those carry on when it closes. The music and the menu's own " +
+             "sounds are NOT paused, so the music settings can be heard. AudioListener.pause itself is never touched, so nothing else that uses it " +
+             "(a sound effects switch, say) is disturbed. OFF: only time is frozen, sounds keep playing.")]
     [SerializeField] private bool pauseWorldSound = true;
     [Tooltip("Plays every time the highlighted row changes (keys, controller or mouse). The toggle sound.")]
     [SerializeField] private AudioClip selectClip;
@@ -214,11 +221,22 @@ public class PauseController : MonoBehaviour
     [SerializeField] private string typingHintText = "Type a number,  Enter to confirm,  Esc to cancel";
     [SerializeField] private string confirmHintText = "Leaving ends this run: your score and progress in the level are lost.";
 
+    [Header("Dying")]
+    [Tooltip("OFF: the pause is blocked once the WHOLE team is down (the game-over screen takes over). " +
+             "ON: it is also blocked while any ONE player that counts is down, waiting to be revived.")]
+    [SerializeField] private bool blockWhileAnyPlayerDown = false;
+
+    [Header("Debug")]
+    [Tooltip("ON: the Console prints what the Sound Effects row changes (time, foes, locks, and who listens to GameSettings.Apply), and warns if the game " +
+             "is still frozen right after the menu closes (the time is then put back by itself). Turn it off once the pause behaves.")]
+    [SerializeField] private bool logWorldState = false;
+
     [Header("Look")]
     [Tooltip("Draw order of the menu's canvas. Higher is drawn on top of other canvases (the Lights Out screen is 600).")]
     [SerializeField] private int canvasSortingOrder = 500;
-    [Tooltip("How dark the screen goes behind the menu (0 = not at all, 1 = black).")]
-    [SerializeField, Range(0f, 1f)] private float dimAmount = 0.65f;
+    [Tooltip("The simple black backdrop behind the menu (0 = none, 1 = fully black). Not fully black on purpose: the level shows through. " +
+             "The rank screens use the same look (Level Results > Backdrop Opacity). The Lights Out screen stays fully black.")]
+    [SerializeField, Range(0f, 1f)] private float dimAmount = ScreenDim.DefaultOpacity;
     [SerializeField] private Color titlePlateColor = new Color(0.1f, 0.12f, 0.2f, 0.95f);
     [SerializeField] private Color titleTextColor = new Color(1f, 0.93f, 0.8f, 1f);
     [SerializeField] private Color buttonColor = new Color(0.16f, 0.16f, 0.18f, 1f);
@@ -236,6 +254,17 @@ public class PauseController : MonoBehaviour
     public static bool BlocksInput => IsPaused || closedFrame == Time.frameCount;
 
     private static int closedFrame = -1;
+    private static PauseController instance;
+
+    /// <summary>
+    /// The game-over screen calls this the moment the team is wiped. An open pause menu closes at once and puts the game back exactly as it was
+    /// (time, foes, sound, cursor), but leaves the players LOCKED: the game-over screen owns them from here and unlocks them itself. Does nothing if
+    /// the menu isn't open.
+    /// </summary>
+    public static void CloseForGameOver()
+    {
+        if (instance != null) instance.CloseKeepingPlayersLocked();
+    }
 
     // Static values survive between Play sessions when "Reload Domain" is switched off, so they are reset by hand.
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -243,6 +272,7 @@ public class PauseController : MonoBehaviour
     {
         IsPaused = false;
         closedFrame = -1;
+        instance = null;
     }
 
     // ------------------------------------------------------------ state
@@ -289,8 +319,7 @@ public class PauseController : MonoBehaviour
     // What we changed, so it can be put back.
     private float _previousTimeScale = 1f;
     private bool _weFroze;
-    private bool _audioPaused;
-    private bool _savedAudioPause;
+    private readonly List<AudioSource> _pausedSources = new List<AudioSource>();   // the world sounds this menu paused, and only those
     private bool _cursorSaved;
     private CursorLockMode _savedLock;
     private bool _savedCursorVisible;
@@ -299,6 +328,13 @@ public class PauseController : MonoBehaviour
     private AudioSource _uiAudio;       // the menu sounds
 
     private bool _notebookWasOpen;
+
+    // After the menu closes the game is watched for a moment: it must be running again (see WatchAfterClose).
+    private const float WatchSeconds = 1.5f;
+    private float _watchUntil = -1f;
+    private float _watchScale = 1f;
+    private bool _watchLogged;
+    private bool _soundChangedThisOpen;
     private HealthComponent _playerHealth;
     private float _nextHealthSearch;
 
@@ -307,15 +343,52 @@ public class PauseController : MonoBehaviour
     private void Awake()
     {
         IsPaused = false;
+        instance = this;
+
+        // This menu never touches AudioListener.pause. If it is already on as the scene starts, something else left it that way: say so.
+        if (logWorldState && AudioListener.pause)
+        {
+            Debug.LogWarning("PauseController: AudioListener.pause was already ON when this scene started, so every sound effect is silent (the music " +
+                             "still plays, it ignores it). Something other than this menu set it and never turned it off.", this);
+        }
+
         BuildUi();
         BuildAudio();
         _root.SetActive(false);
+    }
+
+    private void Start()
+    {
+        TurnOffOldPauseManager();
+    }
+
+    // The older PauseManager listens to the very same P / Esc keys. With both in the scene every press toggles BOTH. This menu's own "back" press
+    // (it only leaves a page, e.g. Music & Sound -> Paused) then closes the old one while this menu stays open, and the press that closes this
+    // menu OPENS the old one again: the game freezes behind a closed menu (time at 0, sound paused, the players' scripts switched off), sound
+    // effects play into a paused listener and then all burst out together, and toggling things again "fixes" it by flipping the pair back in step.
+    // So the old one is told to stand down: its keys and its HUD button do nothing (Pause() / Resume() from code still work), and if it is
+    // paused right now it is resumed. Remove the PauseManager component from the scene and this does nothing.
+    private void TurnOffOldPauseManager()
+    {
+        PauseManager old = PauseManager.Instance;
+        if (old == null) return;
+
+        if (old.allowPausing || PauseManager.IsPaused)
+        {
+            Debug.LogWarning("PauseController: a PauseManager is also in this scene (on '" + old.name + "'). Both react to P / Esc, so the game " +
+                             "froze after the menu closed and the sound effects went silent or burst out together. It has been switched off for now: " +
+                             "remove the PauseManager component from that object, because this menu does everything it did.", old);
+        }
+
+        old.allowPausing = false;
+        if (PauseManager.IsPaused) old.Resume();
     }
 
     private void OnDestroy()
     {
         // Never leave the game frozen or locked behind, e.g. when another scene replaces this one.
         ReleaseWorld();
+        if (instance == this) instance = null;
     }
 
     private void Update()
@@ -334,13 +407,39 @@ public class PauseController : MonoBehaviour
         bool notebookBusy = notebookOpen || _notebookWasOpen;
         _notebookWasOpen = notebookOpen;
 
+        WatchAfterClose(notebookBusy);
+
         if (!PausePressed()) return;
         if (notebookBusy) return;
-        if (FloorController.BlocksInput) return;     // stairs menu up / floor change running / one just closed this frame
-        if (LightsOutScreen.BlocksInput) return;     // the game-over screen owns the keys
-        if (PlayerIsDead()) return;
 
-        Pause();
+        Pause();   // asks CanOpen() itself, so every way of pausing follows the same rules
+    }
+
+    // The one place that decides whether the menu may open. Pause() asks it too, so a HUD button (or any other script) can't open it over a death.
+    private bool CanOpen()
+    {
+        if (FloorController.BlocksInput) return false;     // stairs menu up / floor change running / one just closed this frame
+        if (LightsOutScreen.BlocksInput) return false;     // the game-over screen owns the keys (up from the moment the team is wiped)
+        if (LevelResults.BlocksInput) return false;        // the rank screen owns the keys
+        if (PvpMatch.BlocksInput) return false;            // a PVP round / match is decided: the round banner or the result screen owns the keys
+        if (PlayerIsDead()) return false;
+        return true;
+    }
+
+    // Every player that counts is at 0 health (so the game-over screen is on its way or already up).
+    private static bool TeamIsWiped()
+    {
+        return CoopHealth.Players.Count > 0 && CoopHealth.AllCountedDead;
+    }
+
+    private static bool AnyCountedPlayerDown()
+    {
+        for (int i = 0; i < CoopHealth.Players.Count; i++)
+        {
+            CoopHealth p = CoopHealth.Players[i];
+            if (p != null && CoopRules.Counts(p.PlayerNumber) && p.CurrentHealth <= 0f) return true;
+        }
+        return false;
     }
 
     private bool PausePressed()
@@ -357,7 +456,11 @@ public class PauseController : MonoBehaviour
     private bool PlayerIsDead()
     {
         // Co-op players register themselves, so no search is needed: the pause is blocked once every player that counts is dead.
-        if (CoopHealth.Players.Count > 0) return CoopHealth.AllCountedDead;
+        if (CoopHealth.Players.Count > 0)
+        {
+            if (CoopHealth.AllCountedDead) return true;
+            return blockWhileAnyPlayerDown && AnyCountedPlayerDown();
+        }
 
         if (_playerHealth == null && Time.unscaledTime >= _nextHealthSearch)
         {
@@ -377,6 +480,14 @@ public class PauseController : MonoBehaviour
 
     private void UpdateOpen()
     {
+        // The team went down (or the game-over / rank / PVP result screen came up) while the menu was open. It steps aside and does NOT hold the time at 0
+        // any more: that screen owns the game from here, and a pause still open behind it would freeze the world again after Retry.
+        if (LightsOutScreen.IsActive || LevelResults.IsActive || PvpMatch.BlocksInput || TeamIsWiped())
+        {
+            CloseKeepingPlayersLocked();
+            return;
+        }
+
         // Something else (the notebook closing, say) may have put the time back: the pause keeps it at 0.
         if (Time.timeScale != 0f) Time.timeScale = 0f;
 
@@ -563,6 +674,7 @@ public class PauseController : MonoBehaviour
     public void Pause()
     {
         if (IsPaused) return;
+        if (!CanOpen()) return;   // a death, the game-over screen, the rank screen, a floor change...
 
         if (_root == null)
         {
@@ -580,12 +692,7 @@ public class PauseController : MonoBehaviour
         FoeController.Frozen = true;   // foes, sword, trails, sparks and explosions all obey this
         _weFroze = true;
 
-        if (pauseWorldSound)
-        {
-            _savedAudioPause = AudioListener.pause;
-            AudioListener.pause = true;
-            _audioPaused = true;
-        }
+        if (pauseWorldSound) PauseWorldSounds();
 
         LockPlayers(true);
         SaveAndFreeCursor();
@@ -607,6 +714,17 @@ public class PauseController : MonoBehaviour
     {
         if (!IsPaused) return;
         ReleaseWorld();
+    }
+
+    // Closes the menu without unlocking the players: the screen that made it close (game over, rank screen) locks them itself and unlocks them
+    // when it is done. Clearing the flags makes ReleaseWorld() leave them locked.
+    private void CloseKeepingPlayersLocked()
+    {
+        if (!IsPaused) return;
+
+        for (int n = 0; n < _lockedByUs.Length; n++) _lockedByUs[n] = false;
+        ReleaseWorld();
+        _watchUntil = -1f;   // that screen owns the game now, so nothing is checked against it
     }
 
     /// <summary>Goes straight to the Main Menu scene (no "Are you sure?").</summary>
@@ -635,16 +753,74 @@ public class PauseController : MonoBehaviour
             FoeController.Frozen = false;
         }
 
-        if (_audioPaused)
-        {
-            _audioPaused = false;
-            AudioListener.pause = _savedAudioPause;
-        }
+        ResumeWorldSounds();
 
         LockPlayers(false);
         RestoreCursor();
 
         if (_root != null) _root.SetActive(false);
+
+        _watchUntil = Time.unscaledTime + WatchSeconds;
+        _watchScale = _previousTimeScale;
+        _watchLogged = false;
+
+        if (logWorldState && _soundChangedThisOpen) Debug.Log("PauseController: menu closed after a Sound Effects change. " + WorldState(), this);
+        _soundChangedThisOpen = false;
+    }
+
+    // Pauses every world sound that is playing right now and remembers which ones, so exactly those carry on when the menu closes. Sounds that
+    // ignore the listener pause (the music, this menu's own sounds, the Lights Out sounds) are left alone. AudioListener.pause is NOT used: it is a
+    // global switch, and if anything else in the game keeps sound effects off through it, or sounds are queued behind it, flipping it here
+    // would turn them on, or release them all at once.
+    private void PauseWorldSounds()
+    {
+        _pausedSources.Clear();
+
+        AudioSource[] all = FindObjectsByType<AudioSource>(FindObjectsSortMode.None);
+        for (int i = 0; i < all.Length; i++)
+        {
+            AudioSource source = all[i];
+            if (source == null || source.ignoreListenerPause || !source.isPlaying) continue;
+            if (source.GetComponent<MusicManager>() != null || source.GetComponent<MusicPlayer>() != null) continue;   // the music has its own rules
+
+            source.Pause();
+            _pausedSources.Add(source);
+        }
+    }
+
+    private void ResumeWorldSounds()
+    {
+        for (int i = 0; i < _pausedSources.Count; i++)
+        {
+            if (_pausedSources[i] != null) _pausedSources[i].UnPause();
+        }
+        _pausedSources.Clear();
+    }
+
+    // For a moment after the menu closes: if the time is STILL 0 (or the foes still frozen) and nothing that has a right to hold the game is up,
+    // the game was frozen again by something else, because this menu puts everything back when it closes. Put it back and say what it looked like.
+    private void WatchAfterClose(bool notebookBusy)
+    {
+        if (_watchUntil < 0f) return;
+        if (IsPaused || Time.unscaledTime > _watchUntil)
+        {
+            _watchUntil = -1f;
+            return;
+        }
+
+        // These own the game while they are up: leave them alone.
+        if (notebookBusy || FloorController.BlocksInput) return;
+        if (LightsOutScreen.IsActive || LevelResults.IsActive || PvpMatch.BlocksInput) return;
+
+        if (Time.timeScale > 0f && !FoeController.Frozen) return;
+
+        if (logWorldState && !_watchLogged)
+        {
+            _watchLogged = true;
+            Debug.LogWarning("PauseController: the game was still frozen right after the menu closed, so it was set running again. " + WorldState(), this);
+        }
+        if (Time.timeScale <= 0f) Time.timeScale = _watchScale;
+        if (FoeController.Frozen) FoeController.Frozen = false;
     }
 
     // Locks every player's input, remembering which ones WE locked (a player already locked by something else, like being knocked down,
@@ -1016,7 +1192,7 @@ public class PauseController : MonoBehaviour
 
             case RowId.SoundEffects:
                 _soundOn = !_soundOn;
-                PushGameSettings();
+                PushSoundSetting();
                 Chosen();
                 break;
 
@@ -1313,8 +1489,74 @@ public class PauseController : MonoBehaviour
     {
         GameSettings.PendingMusicOn = _musicOn;
         GameSettings.PendingTrackMode = _shuffle ? 0 : _track;   // 0 = random
+        GameSettings.PendingSoundOn = GameSettings.SoundOn;      // the music rows never touch the sound effects setting
+        GameSettings.Apply();
+    }
+
+    // The Sound Effects row: changes ONLY the sound effects. The music values are sent back exactly as they are right now (not as this menu last
+    // read them), because Apply() makes the music players act on all of them: a stale copy here would pause the music or switch the song.
+    private void PushSoundSetting()
+    {
+        _soundChangedThisOpen = true;
+        if (logWorldState) Debug.Log("PauseController: Sound Effects row, BEFORE Apply. " + WorldState(), this);
+
+        GameSettings.PendingMusicOn = GameSettings.MusicOn;
+        GameSettings.PendingTrackMode = GameSettings.TrackMode;
         GameSettings.PendingSoundOn = _soundOn;
         GameSettings.Apply();
+
+        if (logWorldState)
+        {
+            Debug.Log("PauseController: Sound Effects row, AFTER Apply. " + WorldState() + "  | listening to GameSettings.OnApplied: " + ApplyListeners(), this);
+            StartCoroutine(LogStateLater(0.5f));
+        }
+    }
+
+    private IEnumerator LogStateLater(float seconds)
+    {
+        yield return new WaitForSecondsRealtime(seconds);
+        Debug.Log("PauseController: " + seconds + " s after the Sound Effects Apply. " + WorldState(), this);
+    }
+
+    // One line with everything that can keep the game from running.
+    private static string WorldState()
+    {
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.Append("timeScale=").Append(Time.timeScale);
+        sb.Append(", foesFrozen=").Append(FoeController.Frozen);
+        sb.Append(", audioPaused=").Append(AudioListener.pause);
+        sb.Append(", soundOn=").Append(GameSettings.SoundOn);
+        sb.Append(", musicOn=").Append(GameSettings.MusicOn);
+        sb.Append(", menuOpen=").Append(IsPaused);
+        for (int n = 1; n <= MaxPlayers; n++)
+        {
+            PlayerInputSource source = PlayerInputSource.Get(n);
+            if (source != null) sb.Append(", P").Append(n).Append(source.Locked ? " LOCKED" : " free");
+        }
+        return sb.ToString();
+    }
+
+    // Every method that runs when GameSettings.Apply() is called (read through reflection, so it works whatever GameSettings looks like).
+    private static string ApplyListeners()
+    {
+        try
+        {
+            System.Reflection.FieldInfo field = typeof(GameSettings).GetField("OnApplied",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            System.Delegate all = field != null ? field.GetValue(null) as System.Delegate : null;
+            if (all == null) return "none found";
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            foreach (System.Delegate d in all.GetInvocationList())
+            {
+                sb.Append(d.Target != null ? d.Target.GetType().Name : "(static)").Append('.').Append(d.Method.Name).Append("   ");
+            }
+            return sb.ToString();
+        }
+        catch (System.Exception e)
+        {
+            return "unreadable (" + e.Message + ")";
+        }
     }
 
     // ------------------------------------------------------------ leaving
@@ -1458,7 +1700,8 @@ public class PauseController : MonoBehaviour
     // ------------------------------------------------------------ building the menu
 
     //  Canvas
-    //   PauseRoot       the dark screen (also swallows clicks meant for the game behind it)
+    //   PauseRoot
+    //     Backdrop      the simple translucent black screen (ScreenDim): first child, so it is drawn behind everything; it also swallows clicks
     //     Title         the banner: PAUSED / GRAPHICS / MUSIC & SOUND / ARE YOU SURE?
     //     Row 1..6      one pool of rows, reused by every page (a page just switches the ones it needs on)
     //       Label       the row's text
@@ -1482,8 +1725,8 @@ public class PauseController : MonoBehaviour
         Stretch(root);
         _root = root.gameObject;
 
-        Image dim = root.gameObject.AddComponent<Image>();
-        dim.color = new Color(0f, 0f, 0f, dimAmount);
+        // Translucent black over the whole screen and far past its edges, drawn behind the title and the rows.
+        ScreenDim.Build(root, dimAmount);
 
         // The banner.
         RectTransform title = NewRect("Title", root);

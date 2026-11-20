@@ -166,6 +166,7 @@ public class LevelSelectController : MonoBehaviour
         // ...and nothing from a finished or abandoned run may leak into the next stage: the floor number, a pending Shop trip, frozen foes, locked players.
         FloorController.ResetForMenus();
         LevelResults.ClearStaleState();
+        LevelResults.SyncCardsFromDungeon();   // dungeon rooms cleared before count for their cards too, so the cards below are up to date
 
         catalog = StageCatalog.Load();
         StageUi.EnsureEventSystem();

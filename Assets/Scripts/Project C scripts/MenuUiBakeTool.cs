@@ -1,3 +1,4 @@
+#if UNITY_EDITOR
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
@@ -409,3 +410,4 @@ public class LevelSelectControllerEditor : Editor
         DrawDefaultInspector();
     }
 }
+#endif

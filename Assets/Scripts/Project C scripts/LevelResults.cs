@@ -20,6 +20,11 @@ using UnityEngine.SceneManagement;
 ///   Dungeon        Easy / Normal / Hard has no stage: every floor is a room (room 1 = the first floor) and the drop-down's button goes down to the next
 ///                  one (or to the Shop). The win screen shows after floor Room Count, using THIS run's results.
 ///
+/// SAVING   A room is saved when its results screen opens. A dungeon floor is saved under its own id AND under the Level Select card it is the
+///          same room as (floor N = card N, Rank Settings > Dungeon Counts For Level Select), so playing through the dungeon fills in the cards.
+///          Anything that moves the team on WITHOUT the door (FloorController.GoDown / OpenShop) saves the room too, through
+///          RecordRoomIfUnsaved. Level Select also folds dungeon rooms cleared before into their cards when it opens (SyncCardsFromDungeon).
+///
 /// Other scripts can read:  LevelResults.IsActive,  LevelResults.BlocksInput (FloorController.BlocksInput already includes it).
 /// A door of your own that should end the room the same way:  LevelResults.Complete(() => { ...move on... });
 /// </summary>
@@ -28,6 +33,16 @@ using UnityEngine.SceneManagement;
 public class LevelResults : MonoBehaviour
 {
     private const int MaxPlayers = 4;
+
+    [Header("Backdrop")]
+    [Tooltip("The simple black backdrop behind the room-complete panel and the win screen (0 = none, 1 = fully black). Not fully black on purpose: " +
+             "the level shows through. The pause menu uses the same look.")]
+    [SerializeField, Range(0f, 1f)] private float backdropOpacity = ScreenDim.DefaultOpacity;
+    [Tooltip("Seconds the backdrop takes to fade in and out.")]
+    [SerializeField, Min(0f)] private float backdropFadeSeconds = 0.25f;
+    [Tooltip("Only used if the panel does not create a canvas of its own (the backdrop then gets one, drawn at this order). Normally the backdrop is " +
+             "placed automatically, right behind the panel. If it ever covers the panel, lower this below the panel's canvas.")]
+    [SerializeField] private int backdropFallbackSortingOrder = 450;
 
     // ------------------------------------------------------------ static API
 
@@ -116,6 +131,49 @@ public class LevelResults : MonoBehaviour
         if (instance != null) instance.RestartAttempt();
     }
 
+    /// <summary>
+    /// For anything that moves the team on WITHOUT the door's results screen (FloorController.GoDown / OpenShop called from a script or a button):
+    /// saves the room being played as cleared, with the time, gems and score so far. No screen is shown. Does nothing if the
+    /// room was already saved (the door's screen saves it before it calls GoDown), if the ranks are off, or in a PVP arena.
+    /// </summary>
+    public static void RecordRoomIfUnsaved(int floor)
+    {
+        RankSettings settings = RankSettings.Current;
+        if (!settings.enabled || PvpMode.Enabled || IsActive) return;
+        if (instance == null || instance.savedThisRoom) return;
+
+        LevelInfo level = instance.Resolve(Mathf.Max(1, floor), settings);
+        RankTargets targets = settings.TargetsFor(level.targetStageId, level.number);
+
+        LevelRank rank;
+        int timeTier;
+        int scoreTier;
+        RunAttempt attempt = instance.BuildAttempt(settings, targets, out rank, out timeTier, out scoreTier);
+        instance.SaveRoom(level, attempt);
+    }
+
+    /// <summary>The Level Select card dungeon floor N is the same room as: the Nth Puzzle stage in Level Select order. Null if there is none.</summary>
+    public static StageDefinition StageForFloor(int floor)
+    {
+        List<StageDefinition> list = PuzzleStages();
+        return floor >= 1 && floor <= list.Count ? list[floor - 1] : null;
+    }
+
+    /// <summary>
+    /// Level Select calls this when it opens: a dungeon room cleared earlier (or before this fix) raises the bests of its card. Only bests move
+    /// (plays and history are left alone), so it is safe to call every time.
+    /// </summary>
+    public static void SyncCardsFromDungeon()
+    {
+        if (!RankSettings.Current.dungeonCountsForLevelSelect) return;
+
+        List<StageDefinition> list = PuzzleStages();
+        for (int i = 0; i < list.Count; i++)
+        {
+            LevelRecords.RaiseBests(list[i].Id, LevelRecords.DungeonRoomId(i + 1));
+        }
+    }
+
     private static LevelResults EnsureInstance()
     {
         if (instance != null) return instance;
@@ -132,7 +190,7 @@ public class LevelResults : MonoBehaviour
     private int roomGems = -1;      // the automatic gem count for this room (-1 = not counted yet)
     private bool needsCount;
     private bool timing;
-    private bool warnedLastFloor;
+    private bool savedThisRoom;     // this room already has its result saved (by the results screen, or silently), so it is never saved twice
 
     private void Awake()
     {
@@ -171,6 +229,7 @@ public class LevelResults : MonoBehaviour
 
     private void BeginRoom()
     {
+        savedThisRoom = false;
         seconds = 0f;
         collectedNow = 0;
         roomGems = -1;
@@ -180,6 +239,7 @@ public class LevelResults : MonoBehaviour
 
     private void RestartAttempt()
     {
+        savedThisRoom = false;
         seconds = 0f;
         collectedNow = 0;
     }
@@ -298,7 +358,7 @@ public class LevelResults : MonoBehaviour
     }
 
     // The Puzzle stages in Level Select order (same order as StageCatalog).
-    private static List<StageDefinition> PuzzleStages()
+    public static List<StageDefinition> PuzzleStages()
     {
         List<StageDefinition> list = new List<StageDefinition>();
         for (int i = 0; i < StageDefinition.All.Count; i++)
@@ -344,16 +404,7 @@ public class LevelResults : MonoBehaviour
         info.title = "ROOM " + info.number + " COMPLETE";
         info.subtitle = "ROOM " + info.number + " OF " + info.count;
 
-        FloorManager manager = FindFirstObjectByType<FloorManager>();
-        bool managerSaysLast = manager != null && manager.IsOnLastFloor;
-        info.isLast = info.number >= info.count || managerSaysLast;
-
-        if (managerSaysLast && info.number < info.count && !warnedLastFloor)
-        {
-            warnedLastFloor = true;
-            Debug.LogWarning("LevelResults: FloorManager's Last Floor says floor " + info.number + " is the last, but Rank Settings > Room Count is " + info.count +
-                             ". The win screen is shown here, because the run ends here. Set FloorManager > Last Floor to " + info.count + " to match.", this);
-        }
+        info.isLast = info.number >= info.count;
         return info;
     }
 
@@ -371,25 +422,14 @@ public class LevelResults : MonoBehaviour
         FoeController.Frozen = true;
         LockPlayers(true);
 
-        int p1 = CoopRules.Counts(1) ? CoopScore.Earned(1) : 0;
-        int p2 = CoopRules.Counts(2) ? CoopScore.Earned(2) : 0;
-        int team = CoopScore.Total;
-
-        int total = targets.totalCollectables >= 0 ? targets.totalCollectables : Mathf.Max(roomGems, 0);
-        total = Mathf.Max(total, collectedNow);   // never "5 of 4"
-
         int timeTier;
         int scoreTier;
-        LevelRank rank = RankCalc.Compute(settings, targets, seconds, team, collectedNow, total, out timeTier, out scoreTier);
-
-        RunAttempt attempt = new RunAttempt();
-        attempt.rank = (int)rank;
-        attempt.score = team;
-        attempt.p1 = p1;
-        attempt.p2 = p2;
-        attempt.seconds = seconds;
-        attempt.collected = collectedNow;
-        attempt.total = total;
+        LevelRank rank;
+        RunAttempt attempt = BuildAttempt(settings, targets, out rank, out timeTier, out scoreTier);
+        int p1 = attempt.p1;
+        int p2 = attempt.p2;
+        int team = attempt.score;
+        int total = attempt.total;
 
         // The tries BEFORE this one, newest first (read before the new one is saved).
         LevelRecord before = LevelRecords.Get(level.id);
@@ -399,20 +439,7 @@ public class LevelResults : MonoBehaviour
             for (int i = before.history.Count - 1; i >= 0; i--) prior.Add(before.history[i].rank);
         }
 
-        LevelRecords.Outcome outcome = LevelRecords.Submit(level.id, attempt);
-        Debug.Log("LevelResults: saved '" + level.id + "' as rank " + RankCalc.Letter((int)rank) + (outcome.newBestRank ? " (new best rank)" : "") + ".", this);
-
-        if (!level.stageMode)
-        {
-            RoomResult result = new RoomResult();
-            result.rank = (int)rank;
-            result.p1 = p1;
-            result.p2 = p2;
-            result.seconds = seconds;
-            result.collected = collectedNow;
-            result.total = total;
-            run[level.number] = result;
-        }
+        LevelRecords.Outcome outcome = SaveRoom(level, attempt);
 
         ResultsUi.RoomView view = new ResultsUi.RoomView();
         view.title = level.title;
@@ -456,8 +483,66 @@ public class LevelResults : MonoBehaviour
         }
         view.defaultChoice = view.choices.Count - 1;
 
+        Canvas[] canvasesBefore = ScreenDim.SnapshotCanvases();
         panel = ResultsUi.BuildRoom(view);
+        ScreenDim.BackBehindNewCanvases(canvasesBefore, backdropOpacity, backdropFadeSeconds, backdropFallbackSortingOrder);   // translucent black behind the panel
         StartCoroutine(ResultsUi.Play(panel, settings.buttonGraceSeconds));
+    }
+
+    // The room being played right now as a finished try: the time, gems and score so far, and the rank they earn.
+    private RunAttempt BuildAttempt(RankSettings settings, RankTargets targets, out LevelRank rank, out int timeTier, out int scoreTier)
+    {
+        int p1 = CoopRules.Counts(1) ? CoopScore.Earned(1) : 0;
+        int p2 = CoopRules.Counts(2) ? CoopScore.Earned(2) : 0;
+        int team = CoopScore.Total;
+
+        int total = targets.totalCollectables >= 0 ? targets.totalCollectables : Mathf.Max(roomGems, 0);
+        total = Mathf.Max(total, collectedNow);   // never "5 of 4"
+
+        rank = RankCalc.Compute(settings, targets, seconds, team, collectedNow, total, out timeTier, out scoreTier);
+
+        RunAttempt attempt = new RunAttempt();
+        attempt.rank = (int)rank;
+        attempt.score = team;
+        attempt.p1 = p1;
+        attempt.p2 = p2;
+        attempt.seconds = seconds;
+        attempt.collected = collectedNow;
+        attempt.total = total;
+        return attempt;
+    }
+
+    // Saves one finished room. It goes under its own id (a stage id, or dungeon/room-N), and a dungeon floor ALSO goes under the Level Select card
+    // that floor is the same room as, so a run through the dungeon fills in the cards instead of leaving every one "not cleared".
+    // The Outcome returned is the one for the room's own id (what the results screen compares against).
+    private LevelRecords.Outcome SaveRoom(LevelInfo level, RunAttempt attempt)
+    {
+        savedThisRoom = true;
+
+        LevelRecords.Outcome outcome = LevelRecords.Submit(level.id, attempt);
+        string also = "";
+
+        if (!level.stageMode)
+        {
+            RoomResult result = new RoomResult();
+            result.rank = attempt.rank;
+            result.p1 = attempt.p1;
+            result.p2 = attempt.p2;
+            result.seconds = attempt.seconds;
+            result.collected = attempt.collected;
+            result.total = attempt.total;
+            run[level.number] = result;
+
+            StageDefinition card = RankSettings.Current.dungeonCountsForLevelSelect ? StageForFloor(level.number) : null;
+            if (card != null)
+            {
+                LevelRecords.Submit(card.Id, attempt);
+                also = " and the Level Select card '" + card.Id + "'";
+            }
+        }
+
+        Debug.Log("LevelResults: saved '" + level.id + "'" + also + " as rank " + RankCalc.Letter(attempt.rank) + (outcome.newBestRank ? " (new best rank)" : "") + ".", this);
+        return outcome;
     }
 
     private void BuildStageChoices(ResultsUi.RoomView view, LevelInfo level, RankSettings settings, Func<ResultsUi.Panel> panelOf)
@@ -501,6 +586,7 @@ public class LevelResults : MonoBehaviour
 
     private void CloseRoomPanel(ResultsUi.Panel panel)
     {
+        ScreenDim.FadeOutAll(backdropFadeSeconds);   // the backdrop leaves with the panel
         IsActive = false;
         closedFrame = Time.frameCount;
         LockPlayers(false);
@@ -562,6 +648,7 @@ public class LevelResults : MonoBehaviour
     {
         // The room panel goes away; the screen stays "active" so the players stay locked and the foes frozen.
         if (roomPanel != null) StartCoroutine(ResultsUi.Retract(roomPanel));
+        ScreenDim.FadeOutAll(backdropFadeSeconds);   // the room panel's backdrop fades out while the win screen's fades in
 
         int n = Mathf.Max(1, level.count);
         int[] ranks = new int[n];
@@ -662,7 +749,9 @@ public class LevelResults : MonoBehaviour
         view.choices.Add(Choice("MAIN MENU", StageUi.Violet, () => LeaveToMainMenu(settings)));
         view.defaultChoice = 0;
 
+        Canvas[] canvasesBefore = ScreenDim.SnapshotCanvases();
         ResultsUi.Panel win = ResultsUi.BuildWin(view);
+        ScreenDim.BackBehindNewCanvases(canvasesBefore, backdropOpacity, backdropFadeSeconds, backdropFallbackSortingOrder);
         StartCoroutine(ResultsUi.Play(win, settings.buttonGraceSeconds));
     }
 

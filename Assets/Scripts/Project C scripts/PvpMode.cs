@@ -36,6 +36,15 @@ public static class PvpMode
     /// <summary>Multiplies the sword's damage when it hits a PLAYER (never foes). 1 = same damage as against foes.</summary>
     public static float DamageScale = 1f;
 
+    /// <summary>Multiplies the sword's knockback when it hits a PLAYER (never foes). 1 = same push as against foes, 0 = no push.</summary>
+    public static float KnockbackScale = 1f;
+
+    /// <summary>
+    /// Name of the PVP arena being played. StageLauncher sets it when it launches a PVP stage, and PvpMatch shows it on the
+    /// Round 1 banner only. Empty = no arena banner (Round 1 goes straight to its round number).
+    /// </summary>
+    public static string ArenaName = "";
+
     /// <summary>Rounds a player must win to win the match (set by the PVP menu, 1 to 3).</summary>
     public static int RoundsToWin = 2;
 
@@ -91,6 +100,8 @@ public static class PvpMode
         _enabled = false;
         Changed = null;
         DamageScale = 1f;
+        KnockbackScale = 1f;
+        ArenaName = "";
         RoundsToWin = 2;
         ResetMatch();
     }

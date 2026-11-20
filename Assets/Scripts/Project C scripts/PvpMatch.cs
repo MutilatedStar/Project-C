@@ -13,12 +13,14 @@ using Ilumisoft.HealthSystem;
 ///   - keeps the co-op bonuses off (shared damage / score / single player mode) and Player 2 switched on,
 ///   - stops the game-over screen from coming up when one player falls (CoopHealth.TeamWipeBlockers),
 ///   - watches both players: when one is at 0 health the OTHER wins the round,
-///   - shows the score at the top of the screen and a round banner,
+///   - shows the score at the top of the screen and a round banner (Round 1 opens with the arena name, then the round number),
 ///   - starts the next round by reloading the stage (same stage, scores kept), or ends the match at "Rounds To Win"
 ///     with Rematch / Pick Arena / Main Menu buttons.
 ///
 /// Swords hurt the other player through SwordController (PvpMode.CanHurt) and nobody can revive a fallen player through
 /// CoopDowned while PVP is on. Both are small additions to those scripts.
+/// The same hits also shove the victim (Knockback Scale below) and bring the sword's specials: ice slows walking, lightning slows
+/// swinging, fire trails burn. All of that lives in SwordController, SwordFireTrail and TopDownCharacterController.
 /// </summary>
 [DisallowMultipleComponent]
 [AddComponentMenu("Stages/Pvp Match")]
@@ -27,10 +29,14 @@ public class PvpMatch : MonoBehaviour
     [Header("Match")]
     [Tooltip("Damage multiplier for sword hits on a PLAYER (foes are not affected). 1 = the sword's normal damage.")]
     [SerializeField, Min(0.05f)] private float damageScale = 1f;
+    [Tooltip("Knockback multiplier for sword hits on a PLAYER (foes are not affected). 1 = the sword's own Knockback number, 0 = no knockback.")]
+    [SerializeField, Min(0f)] private float knockbackScale = 1f;
     [Tooltip("Seconds the round result stays on screen before the next round starts.")]
     [SerializeField, Min(0.5f)] private float roundEndDelay = 2.5f;
     [Tooltip("Seconds after the scene opens before a player at 0 health counts as knocked out (lets health set itself up).")]
     [SerializeField, Min(0f)] private float startGrace = 1f;
+    [Tooltip("Seconds the arena name holds on screen at the start of Round 1, before it fades and the round number shows.")]
+    [SerializeField, Min(0.3f)] private float arenaBannerHold = 1.4f;
 
     [Header("Where the buttons go")]
     [Tooltip("Scene name of the main menu. 'Mainmenu', 'MainMenu' and 'Main Menu' are tried too (capitals and spaces don't matter).")]
@@ -40,11 +46,36 @@ public class PvpMatch : MonoBehaviour
 
     private enum State { Fighting, RoundOver, MatchOver }
 
+    /// <summary>Seconds a StageBanner takes to fade in and out on top of its hold time.</summary>
+    private const float BannerFadeTime = 0.8f;
+
+    private static PvpMatch current;
+
+    /// <summary>
+    /// True from the moment a round is decided (a player fell) until the scene is left: the round banner, and then the match result screen, are up
+    /// or on their way. PauseController reads it so the pause menu can't open over them (two menus at once), and closes itself if it was already open.
+    /// </summary>
+    public static bool BlocksInput
+    {
+        get { return current != null && current.state != State.Fighting; }
+    }
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        current = null;
+    }
+
     private State state = State.Fighting;
     private bool blockerAdded;
     private bool seen1, seen2, introShown;
     private Canvas hud;
     private TextMeshProUGUI scoreLabel;
+
+    private void Awake()
+    {
+        current = this;
+    }
 
     private void Update()
     {
@@ -61,6 +92,7 @@ public class PvpMatch : MonoBehaviour
         }
 
         PvpMode.DamageScale = damageScale;
+        PvpMode.KnockbackScale = knockbackScale;
         PvpMode.ApplyRules();
         if (!LocalCoop.Enabled) PvpMode.RequireTwoPlayers();
         if (hud == null) BuildHud();
@@ -79,7 +111,7 @@ public class PvpMatch : MonoBehaviour
         if (!introShown)
         {
             introShown = true;
-            StageBanner.Show(this, "Round " + (PvpMode.RoundsPlayed + 1), "FIRST TO " + PvpMode.RoundsToWin, StageUi.Orange, 1.1f);
+            StartCoroutine(IntroRoutine());
         }
 
         bool aDown = !a.IsAlive;
@@ -92,6 +124,7 @@ public class PvpMatch : MonoBehaviour
 
     private void OnDestroy()
     {
+        if (current == this) current = null;
         if (blockerAdded) RemoveBlocker();
         if (hud != null) Destroy(hud.gameObject);
     }
@@ -100,6 +133,29 @@ public class PvpMatch : MonoBehaviour
     {
         CoopHealth.TeamWipeBlockers = Mathf.Max(0, CoopHealth.TeamWipeBlockers - 1);
         blockerAdded = false;
+    }
+
+    // ------------------------------------------------------------ intro banner
+
+    /// <summary>
+    /// Round 1 opens with the arena name. Once that banner has faded, the round number banner comes up.
+    /// Every later round skips the arena name and goes straight to its round number.
+    /// </summary>
+    private IEnumerator IntroRoutine()
+    {
+        if (PvpMode.RoundsPlayed == 0 && !string.IsNullOrEmpty(PvpMode.ArenaName))
+        {
+            StageBanner.Show(this, PvpMode.ArenaName, "PVP ARENA", StageUi.Violet, arenaBannerHold);
+
+            // Wait out the hold time plus the banner's fade in/out (NextRoundRoutine budgets the same 0.8 s around its banner).
+            float t = 0f;
+            while (t < arenaBannerHold + BannerFadeTime) { t += Time.unscaledDeltaTime; yield return null; }
+
+            // If a player already fell while the arena name was up, the round result banner owns the screen: no round number.
+            if (state != State.Fighting) yield break;
+        }
+
+        StageBanner.Show(this, "Round " + (PvpMode.RoundsPlayed + 1), "FIRST TO " + PvpMode.RoundsToWin, StageUi.Orange, 1.1f);
     }
 
     // ------------------------------------------------------------ rounds
@@ -152,6 +208,10 @@ public class PvpMatch : MonoBehaviour
         {
             PlayerInputSource source = PlayerInputSource.Get(n);
             if (source != null) source.Locked = true;
+
+            // Ice slow, lightning shock and any shove end with the round, so none of it carries into the next one.
+            SwordController sword = SwordController.Get(n);
+            if (sword != null) sword.ClearPvpEffects();
         }
     }
 
@@ -160,6 +220,12 @@ public class PvpMatch : MonoBehaviour
     private void BuildHud()
     {
         hud = StageUi.CreateCanvas("PVP Score", 800);
+
+        // Soft black plate behind "P1 score  FIRST TO N  P2 score". Created first so it sits behind the text; it is centred on the
+        // label below (80 px tall at 18 px from the top), 12 px taller than the text on each side.
+        Image plate = StageUi.Img("Score Backdrop", hud.transform, StageUi.SoftBlack, StageUi.Rounded, true);
+        StageUi.Top(plate.rectTransform, new Vector2(620f, 92f), 12f);
+
         scoreLabel = StageUi.Label("Score", hud.transform, "", 54f, StageUi.Text, TextAlignmentOptions.Center, FontStyles.Bold);
         StageUi.Top(scoreLabel.rectTransform, new Vector2(900f, 80f), 18f);
         RefreshScore();

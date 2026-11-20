@@ -115,6 +115,12 @@ public class RankSettings : ScriptableObject
     [Tooltip("The most specific row wins: a row with a stage AND a room beats a row with only a stage, which beats a row with only a room, which beats the defaults above.")]
     public List<RankTargetOverride> overrides = new List<RankTargetOverride>();
 
+    [Header("Level Select cards")]
+    [Tooltip("ON: clearing floor N of the dungeon (or ending the run from it) also counts as clearing the Nth card on Level Select, with the same rank, score and time, " +
+             "so playing through the dungeon fills in the cards instead of leaving them all 'not cleared'. Rooms cleared before are folded in when Level Select opens. " +
+             "Needs dungeon floor N to be the same room as Level Select stage N; switch it OFF if your floors and stages are not in the same order.")]
+    public bool dungeonCountsForLevelSelect = true;
+
     [Header("Screens")]
     [Tooltip("Exact name of the Level Select scene (the buttons on the screens use it). Capitals and spaces don't matter.")]
     public string levelSelectScene = "LevelSelect";

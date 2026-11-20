@@ -769,6 +769,10 @@ public class FloorController : MonoBehaviour
     {
         if (IsChangingFloor) return;
 
+        // A door has already shown the results and saved the room before it calls this. Anything else that sends the team down (FloorManager.GoDownFloor,
+        // a button, a script) skips that screen, so the room is saved as cleared here; it does nothing if the room was already saved.
+        LevelResults.RecordRoomIfUnsaved(CurrentFloor);
+
         if (logTileUnderPlayer) Debug.Log("FloorController: heading from floor " + CurrentFloor + " to floor " + (CurrentFloor + 1) + ".", this);
         StartCoroutine(ChangeFloorRoutine(CurrentFloor + 1, false));
     }
@@ -778,6 +782,9 @@ public class FloorController : MonoBehaviour
     /// spawn points behind the "Floor Level N" screen. Works from any button's OnClick as well as from a Shop door.</summary>
     public void OpenShop()
     {
+        if (IsChangingFloor) return;
+
+        LevelResults.RecordRoomIfUnsaved(CurrentFloor);   // a Shop door saved the room already; a button or script that calls this did not
         TryOpenShop();
     }
 

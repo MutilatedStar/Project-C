@@ -32,8 +32,7 @@ using Ilumisoft.HealthSystem;
 /// first entry in FoeSpawner's "levels" list. Past the last entry the spawner reuses the last list.
 /// The floor a run STARTS on is FloorController's "Starting Floor" field.
 ///
-/// Going down also HEALS every player that counts (Heal On Descent, 10% of max health by default) and the run has an END: when the floor
-/// number goes past "Last Floor", no new floor is built and EndScreens loads the Ending scene instead.
+/// Going down also HEALS every player that counts (Heal On Descent, 10% of max health by default).
 ///
 /// HAZARD TILES: it also reads the tile under each player, by player NUMBER, and hurts them:
 ///   lava    hurts the players listed in "Lava Hurts" (Player 1, blue, by default); any tile with "lava" in its name
@@ -85,13 +84,9 @@ public class FloorManager : MonoBehaviour
     [Tooltip("Optional, for floors built from prefabs: floor pieces with a Collider2D (trigger is fine) on this layer. Nothing = off.")]
     [SerializeField] private LayerMask floorMask = 0;
 
-    [Header("Going down: healing and the last floor")]
-    [Tooltip("The final floor of the run. Going down from it (a door) ends the run (Ending scene) instead of building another floor.")]
-    [SerializeField, Min(1)] private int lastFloor = 4;
+    [Header("Going down: healing")]
     [Tooltip("Fraction of each player's MAX health restored each time the floor number goes up. 0.1 = 10%. 0 = no healing.")]
     [SerializeField, Range(0f, 1f)] private float healOnDescent = 0.1f;
-    [Tooltip("Leave empty to find the EndScreens in the scene. It loads the Ending scene on a win (and the Failure Ending scene when health hits zero).")]
-    [SerializeField] private EndScreens endScreens;
 
     [Header("Hazard tiles (lava, water, spikes)")]
     [Tooltip("Master switch for lava, water and spikes.")]
@@ -189,7 +184,6 @@ public class FloorManager : MonoBehaviour
     private void Awake()
     {
         if (spawner == null) spawner = FindAnyObjectByType<FoeSpawner>();
-        if (endScreens == null) endScreens = FindAnyObjectByType<EndScreens>();
 
         // Awake runs before every Start, so the spawner's own Auto Start can never start the wrong level over ours.
         if (spawner != null) spawner.ControlledExternally = true;
@@ -248,14 +242,6 @@ public class FloorManager : MonoBehaviour
         invalidSince.Clear();
         spikeProbes.Clear();   // the new floor may have other spike tiles: watch them afresh
 
-        // Went down from the last floor: the run is won. No new level starts, and nothing listening to OnFloorChanged
-        // gets a floor number that has no data behind it.
-        if (floor > lastFloor)
-        {
-            WinRun();
-            return;
-        }
-
         // Healing only on a real step down. The first call of a scene (a fresh start, or back from the Shop) has no
         // previous floor, so it never heals.
         if (previousFloor > 0 && floor > previousFloor) HealPlayers(healOnDescent);
@@ -263,22 +249,6 @@ public class FloorManager : MonoBehaviour
         if (spawner != null) spawner.StartLevel(floor - 1);   // StartLevel also clears any foe still left from the last floor
 
         OnFloorChanged?.Invoke(floor);
-    }
-
-    /// <summary>True while the player is on the final floor (going down from here is the victory).</summary>
-    public bool IsOnLastFloor => CurrentFloor >= lastFloor;
-
-    /// <summary>
-    /// Ends the run by loading the Ending scene (through EndScreens). Called automatically when the floor number goes past "Last Floor"; any script
-    /// can also call it directly (for example from a script on the last floor, to skip the extra black screen).
-    /// </summary>
-    public void WinRun()
-    {
-        ClearAllFoes();   // no score for these
-
-        if (endScreens == null) endScreens = FindAnyObjectByType<EndScreens>();
-        if (endScreens != null) endScreens.ShowVictory();
-        else Debug.LogWarning("FloorManager: the run is won but there is no EndScreens in the scene to load the Ending scene.", this);
     }
 
     // Restores a fraction of each living player's MAX health (so health upgrades from the Shop count). AddHealth clamps at max.

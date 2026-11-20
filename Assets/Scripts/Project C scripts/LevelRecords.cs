@@ -182,6 +182,37 @@ public static class LevelRecords
         return outcome;
     }
 
+    /// <summary>
+    /// Makes the bests saved under toId at least as good as the bests under fromId (a dungeon room that was cleared also counts for its Level Select
+    /// card). Only the bests move, never the play count or the history, so calling it again changes nothing. True if anything changed.
+    /// </summary>
+    public static bool RaiseBests(string toId, string fromId)
+    {
+        if (string.IsNullOrEmpty(toId) || string.IsNullOrEmpty(fromId) || toId == fromId) return false;
+
+        LevelRecord from = Get(fromId);
+        if (from == null || !from.Cleared) return false;
+
+        LevelRecord to = Get(toId);
+        bool changed = false;
+        if (to == null)
+        {
+            to = new LevelRecord();
+            to.id = toId;
+            data.levels.Add(to);
+            changed = true;
+        }
+
+        if (from.bestRank > to.bestRank) { to.bestRank = from.bestRank; changed = true; }
+        if (from.bestScore > to.bestScore) { to.bestScore = from.bestScore; changed = true; }
+        if (from.bestTime >= 0f && (to.bestTime < 0f || from.bestTime < to.bestTime)) { to.bestTime = from.bestTime; changed = true; }
+        if (to.bestRun == null || IsBetter(from.bestRun, to.bestRun)) { to.bestRun = from.bestRun.Copy(); changed = true; }
+        if (to.plays < 1) { to.plays = 1; changed = true; }
+
+        if (changed) Save();
+        return changed;
+    }
+
     /// <summary>Forgets every saved rank, score and time.</summary>
     public static void ClearAll()
     {

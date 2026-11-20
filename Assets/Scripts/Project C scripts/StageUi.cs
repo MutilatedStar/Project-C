@@ -24,6 +24,9 @@ public static class StageUi
     public static readonly Color Text    = new Color(0.94f, 0.96f, 1.00f, 1f);
     public static readonly Color TextDim = new Color(0.62f, 0.69f, 0.82f, 1f);
 
+    /// <summary>Soft black plate behind text that sits right on the game view (the PVP score, the stage / round banners). The 4th number is the opacity: lower = more see-through.</summary>
+    public static readonly Color SoftBlack = new Color(0f, 0f, 0f, 0.55f);
+
     // ------------------------------------------------------------ sprites
 
     private static Sprite _rounded;

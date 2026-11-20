@@ -43,6 +43,13 @@ using Cainos.PixelArtTopDown_Basic;
 ///
 /// Particles: fire, ice and lightning swords sparkle along the blade while it is out (SwordElementFx.cs, built by this script).
 ///
+/// PVP (PvpMode.Enabled; with it off none of this ever happens): a blade hit on the OTHER player does damage and then also
+///   Knockback    shoves them back by the sword's Knockback x PvpMode.KnockbackScale
+///   Ice          slows their walking (Slow Factor for Slow Time)
+///   Lightning    (Chain Targets above 0) slows their swinging: swing, spin and the wait between swings (Shock Swing Factor for Shock Time)
+///   Fire trail   burns them while they stand in the flames (SwordFireTrail)
+/// A hit that does no damage (the victim is jumping, invincible) does none of this either. Freeze is for foes only.
+///
 /// Until a sword has a Sprite, a plain coloured bar is drawn so you can test right away.
 /// Once it has one, Sprite Scale / Sprite Width / Sprite Height resize it, and with Fit Hitbox To Sprite ON the
 /// sword's hit range follows the size you see (the yellow circle on the player shows it in the Scene view).
@@ -114,6 +121,10 @@ public class SwordController : MonoBehaviour
         public Color boltColor = new Color(1f, 1f, 0.5f);
         [Tooltip("Multiplies the damage of every lightning jump. 1 = normal. The shop raises it.")]
         [Min(0f)] public float chainDamageMultiplier = 1f;
+        [Tooltip("PVP ONLY, and only for a sword with Chain Targets above 0: a player this sword hits swings (and spins, and waits between swings) at this fraction of their normal speed. 1 = off. 0.6 = 40% slower. Foes are not affected.")]
+        [Range(0.1f, 1f)] public float shockSwingFactor = 0.6f;
+        [Tooltip("PVP ONLY: seconds the shock lasts (a new hit refreshes it).")]
+        [Min(0f)] public float shockTime = 3f;
 
         [Header("Ice")]
         [Tooltip("Foes hit move at this fraction of their speed. 1 = off. 0.5 = half speed.")]
@@ -338,6 +349,30 @@ public class SwordController : MonoBehaviour
         RebuildEffective();
     }
 
+    /// <summary>
+    /// PVP lightning shock: for <paramref name="seconds"/>, this player's swings, spins and the wait between swings run at
+    /// <paramref name="factor"/> of normal speed (0.6 = 40% slower). The spin CHARGE is left alone, like the attack-speed upgrades do.
+    /// A new shock refreshes the time and keeps the stronger slow. Called on the VICTIM's SwordController by the attacker's.
+    /// </summary>
+    public void ApplyShock(float factor, float seconds)
+    {
+        if (seconds <= 0f || factor >= 1f) return;
+
+        factor = Mathf.Clamp(factor, 0.1f, 1f);
+        shockFactor = shockTimeLeft > 0f ? Mathf.Min(shockFactor, factor) : factor;
+        shockTimeLeft = Mathf.Max(shockTimeLeft, seconds);
+    }
+
+    /// <summary>Ends every PVP effect on this player right now: the swing shock, and the shove and walking slow on the character.</summary>
+    public void ClearPvpEffects()
+    {
+        shockTimeLeft = 0f;
+        shockFactor = 1f;
+
+        TopDownCharacterController mover = GetComponent<TopDownCharacterController>();
+        if (mover != null) mover.ClearHitEffects();
+    }
+
     /// <summary>Fires when a sword becomes owned. Hook a "new sword!" message to it.</summary>
     public event System.Action<SwordStats> SwordUnlocked;
 
@@ -366,6 +401,8 @@ public class SwordController : MonoBehaviour
 
     private PlayerInputSource input;    // this player's buttons (keyboard half + controller)
     private SwordBonus timedBonus;       // power-ups running right now (PlayerEffects)
+    private float shockFactor = 1f;      // PVP lightning shock: swing speed while it lasts (1 = normal)
+    private float shockTimeLeft;
     private Animator animator;
     private SpriteRenderer playerSprite;
     private HealthComponent playerHealth;
@@ -729,19 +766,35 @@ public class SwordController : MonoBehaviour
             debugUnlockApplied = false;
         }
 
+        // PVP lightning shock: the swing, the spin and the wait between swings run on a slower clock for a few seconds.
+        // The spin charge keeps the normal clock. Only a PVP hit ever starts a shock; with PVP off any leftover is dropped.
+        float attackDt = dt;
+        if (shockTimeLeft > 0f)
+        {
+            if (PvpMode.Enabled)
+            {
+                shockTimeLeft -= dt;
+                attackDt = dt * shockFactor;
+            }
+            else
+            {
+                shockTimeLeft = 0f;
+            }
+        }
+
         if (spinning)
         {
-            UpdateSpin(dt);
+            UpdateSpin(attackDt);
             return;
         }
 
-        if (swinging) UpdateSwing(dt);
+        if (swinging) UpdateSwing(attackDt);
 
         UpdateCharge(dt);   // may start the spin
 
         if (!swinging && !spinning)
         {
-            cooldownLeft -= dt;
+            cooldownLeft -= attackDt;
             if (!charging) HandleSwitchInput();
 
             if (!charging && cooldownLeft <= 0f && AttackPressed())
@@ -1055,13 +1108,52 @@ public class SwordController : MonoBehaviour
             bool crit = Random.value < s.critChance;
             float damage = (crit ? baseDamage * s.critMultiplier : baseDamage) * PvpMode.DamageScale;
 
+            // Did the hit really hurt? A victim who is jumping or invincible takes nothing, and then gets no shove or status either.
+            // (Judged by their health going down, so this does not depend on what ApplyDamage returns.)
+            HealthComponent victimHealth = FindOn<HealthComponent>(other);
+            float healthBefore = victimHealth != null ? victimHealth.CurrentHealth : 0f;
+
             other.ApplyDamage(damage);
             if (crit) PlayCritSound();
+
+            bool landed = victimHealth == null || victimHealth.CurrentHealth < healthBefore - 0.0001f;
+            if (landed && other.IsAlive)
+            {
+                Vector2 pushDirection = toPlayer.sqrMagnitude > 0.0001f ? toPlayer.normalized : AngleToVector(facingAngle);
+                ApplyPvpHitEffects(other, s, pushDirection, center);
+            }
         }
     }
 
-    // The player's solid (non-trigger) collider, found once and remembered.
-    private Collider2D PvpColliderOf(CoopHealth player)
+    // What a PVP hit does besides damage (the sword's own numbers, same as against foes): knockback, ice slows walking,
+    // lightning slows swinging. Fire is the trail on the ground (SwordFireTrail). Freeze stays foe-only.
+    private void ApplyPvpHitEffects(CoopHealth victim, SwordStats s, Vector2 pushDirection, Vector2 victimCenter)
+    {
+        TopDownCharacterController mover = FindOn<TopDownCharacterController>(victim);
+        if (mover != null)
+        {
+            if (s.knockback > 0f && PvpMode.KnockbackScale > 0f) mover.Knockback(pushDirection, s.knockback * PvpMode.KnockbackScale);
+            if (s.slowFactor < 1f) mover.ApplySlow(s.slowFactor, s.slowTime);
+        }
+
+        if (s.chainTargets > 0)
+        {
+            SpawnBolt(pivot.position, victimCenter, s.boltColor);   // sword to the victim, same bolt the foes get
+
+            SwordController victimSword = Get(victim.PlayerNumber);
+            if (victimSword != null) victimSword.ApplyShock(s.shockSwingFactor, s.shockTime);
+        }
+    }
+
+    // The component on this object, or on a parent, or on a child (the same search Awake uses for the health).
+    private static T FindOn<T>(Component source) where T : Component
+    {
+        T found = source.GetComponentInParent<T>();
+        return found != null ? found : source.GetComponentInChildren<T>();
+    }
+
+    // The player's solid (non-trigger) collider, found once and remembered. (SwordFireTrail uses it too.)
+    internal Collider2D PvpColliderOf(CoopHealth player)
     {
         Collider2D found;
         if (pvpColliders.TryGetValue(player, out found) && found != null) return found;
@@ -1268,7 +1360,8 @@ public class SwordController : MonoBehaviour
         trail.Begin(start, direction, s.trailLength, s.trailWidth, s.trailDamage, s.trailTickTime, s.trailDuration,
                     foeFilter,
                     playerSprite != null ? playerSprite.sortingLayerID : 0,
-                    playerSprite != null ? playerSprite.sortingOrder - 1 : 0);
+                    playerSprite != null ? playerSprite.sortingOrder - 1 : 0,
+                    this);   // PVP: the trail burns the other player, never its owner
     }
 
     private static Vector2 AngleToVector(float degrees)

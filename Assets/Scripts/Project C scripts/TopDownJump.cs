@@ -75,9 +75,13 @@ namespace Cainos.PixelArtTopDown_Basic
     ///                foes, crates and so on. "Never Jump Over" always wins: put the walls and the stage boundary there, or the
     ///                player could jump out of the stage. Anything that matches neither stays solid.
     ///   Jump ON      landing on a collider that passes the "Jump On" rule climbs one level: the player's physics layer and sorting
-    ///                layer change to the next entry of "Levels". Walking off it (or jumping to open ground) drops back down.
+    ///                layer change to the next entry of "Levels". Walking off it (or jumping to open ground) drops back down, but only
+    ///                once the WHOLE body is clear of it: while any part of the body still overlaps it the player stays up, because
+    ///                letting go earlier turns its collision back on inside the player and the physics shoves them off (a visible snap).
     ///                If the landing spot is inside something solid, or there is no higher level, the player keeps gliding at ground
     ///                height until the spot is free, and goes back to where the jump started after "Blocked Landing Seconds".
+    ///   Draw order   while in the air the sprite is drawn above every sorting layer, except the ones listed in "Never Draw Over".
+    ///                Among jumpers, the one that took off LATER is drawn on top (it is rising while the earlier one is coming down).
     ///
     /// TopDownCharacterController asks for the jump (TryJump) and reads IsAirborne / SpeedMultiplier. This component does the rest.
     /// Needs CoopHealth.cs (the Airborne flag) and the player's solid (non-trigger) collider on this object or a child.
@@ -143,6 +147,14 @@ namespace Cainos.PixelArtTopDown_Basic
         };
         [Tooltip("How far the sprite is drawn higher for each level climbed (world units). 0 = the layer changes but the sprite stays level with the ground.")]
         [SerializeField, Min(0f)] private float heightPerLevel = 0f;
+
+        [Header("Draw order: what is drawn on top while in the air")]
+        [Tooltip("While in the air the sprite is drawn above every sorting layer, so a jumping player is never hidden behind a wall, a prop or a foe. " +
+                 "Of two jumpers, the one that took off LATER is drawn on top (it is rising while the other one is coming down).")]
+        [SerializeField] private bool drawAboveWhileAirborne = true;
+        [Tooltip("Sorting layer NAMES a jumping sprite is never drawn over (UI, a roof, a foreground overlay). It is drawn on the layer just below the " +
+                 "lowest of these that sits above the player's own layer. Empty = above everything, UI layers included.")]
+        [SerializeField] private string[] neverDrawOver = new string[0];
 
         [Header("Fine tuning")]
         [Tooltip("How far around the player colliders are checked for 'can I pass this?' while in the air.")]
@@ -225,6 +237,32 @@ namespace Cainos.PixelArtTopDown_Basic
         private int currentSorting;
         private int appliedLevel;
 
+        // Draw order in the air. airSortingByLevel[level] = the sorting layer the sprite is drawn on while jumping from that level.
+        private int[] airSortingByLevel;
+        private int[] neverDrawOverIds;
+        private const int AirOrderBase = 10000;     // order in layer of the lowest jumper: above anything a layer normally holds
+        private const int AirOrderStride = 100;     // room between two jumpers for the parts that ride with each (see SortParts)
+
+        // Everyone who is in the air right now, in take-off order. The later in the list, the higher it is drawn.
+        private static readonly List<TopDownJump> airborneOrder = new List<TopDownJump>();
+
+        // Renderers of the lifted parts that were moved to the air layer, with the order they had. Put back on landing.
+        private readonly List<Renderer> airParts = new List<Renderer>();
+        private readonly List<int> airPartOrders = new List<int>();
+        private bool partsInAir;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            airborneOrder.Clear();   // survives between Play sessions when domain reload is switched off
+        }
+
+        // The order in layer of this jumper's sprite: one step above everyone who took off before it.
+        private int AirOrder
+        {
+            get { return AirOrderBase + Mathf.Max(0, airborneOrder.IndexOf(this)) * AirOrderStride; }
+        }
+
         // The sprite copy that is drawn raised (the Animator-driven sprite itself cannot move without moving the body).
         private SpriteRenderer body;
         private SpriteRenderer proxy;
@@ -259,6 +297,7 @@ namespace Cainos.PixelArtTopDown_Basic
             CacheColliders();
             BuildSpriteProxy();
             BuildShadow();
+            ResolveNeverDrawOver();
             BuildLevels();
 
             jumpOver.Prepare(name, this);
@@ -342,7 +381,8 @@ namespace Cainos.PixelArtTopDown_Basic
 
         // The Animator draws the player's sprite on the player's own object, which cannot move without taking the body with it.
         // So while the player is high, that renderer is hidden and a copy is drawn raised instead. The copy sits in its own
-        // Sorting Group, which is sorted by the ground position, so a jumping player does not slip behind things in front of them.
+        // Sorting Group. On the ground the group is sorted like the player (by ground position). In the air it is moved to the top
+        // sorting layer (see "Never Draw Over") at an order given by take-off time, so a jumper is never hidden behind what it flies over.
         private void BuildSpriteProxy()
         {
             body = bodyRenderer != null ? bodyRenderer : GetComponent<SpriteRenderer>();
@@ -441,6 +481,9 @@ namespace Cainos.PixelArtTopDown_Basic
                 sortingByLevel[i + 1] = ResolveSortingLayer(levels[i].sortingLayer, sortingByLevel[i]);
             }
 
+            airSortingByLevel = new int[count + 1];
+            for (int i = 0; i <= count; i++) airSortingByLevel[i] = ResolveAirSorting(sortingByLevel[i]);
+
             currentPhysics = physicsByLevel[0];
             currentSorting = sortingByLevel[0];
             appliedLevel = 0;
@@ -474,6 +517,58 @@ namespace Cainos.PixelArtTopDown_Basic
                                  "(Project Settings > Tags and Layers), so that step keeps the sorting layer below it.", this);
             }
             return fallback;
+        }
+
+        // The sorting layers a jumping sprite is never drawn over, as ids.
+        private void ResolveNeverDrawOver()
+        {
+            int count = neverDrawOver != null ? neverDrawOver.Length : 0;
+            neverDrawOverIds = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                if (TryGetSortingLayerId(neverDrawOver[i], out neverDrawOverIds[i])) continue;
+
+                neverDrawOverIds[i] = int.MinValue;   // never equals a real id
+                Debug.LogWarning("TopDownJump on '" + name + "': Never Draw Over names a sorting layer \"" + neverDrawOver[i] + "\" that does not exist " +
+                                 "(Project Settings > Tags and Layers). That entry is ignored.", this);
+            }
+        }
+
+        // Where a sprite that normally sits on this sorting layer is drawn while it is in the air: the highest layer there is, or the one
+        // just below the lowest "Never Draw Over" layer above it. Layers below its own never matter, they are under it already.
+        private int ResolveAirSorting(int ownLayerId)
+        {
+            if (IsNeverDrawOver(ownLayerId)) return ownLayerId;
+
+            SortingLayer[] layers = SortingLayer.layers;
+            Array.Sort(layers, (a, b) => a.value.CompareTo(b.value));   // bottom to top
+
+            int own = -1;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                if (layers[i].id != ownLayerId) continue;
+                own = i;
+                break;
+            }
+            if (own < 0) return ownLayerId;
+
+            int top = layers.Length - 1;
+            for (int i = own + 1; i < layers.Length; i++)
+            {
+                if (!IsNeverDrawOver(layers[i].id)) continue;
+                top = i - 1;   // always >= own
+                break;
+            }
+            return layers[top].id;
+        }
+
+        private bool IsNeverDrawOver(int layerId)
+        {
+            for (int i = 0; i < neverDrawOverIds.Length; i++)
+            {
+                if (neverDrawOverIds[i] == layerId) return true;
+            }
+            return false;
         }
 
         /// <summary>Finds a sorting layer by name. SortingLayer.NameToID answers 0 (Default) for a typo, so the list is searched instead.</summary>
@@ -568,6 +663,8 @@ namespace Cainos.PixelArtTopDown_Basic
             arc = 0f;
             takeoffPosition = rb.position;
 
+            if (!airborneOrder.Contains(this)) airborneOrder.Add(this);   // drawn above everyone who took off before
+
             SetHittable(false);
             IgnoreNearbyPassables();   // before the first physics step, so nothing next to the player can stop the take-off
 
@@ -603,6 +700,7 @@ namespace Cainos.PixelArtTopDown_Basic
             blockedFor = 0f;
             cooldownLeft = cooldown;
 
+            airborneOrder.Remove(this);
             RestoreCollisions();
             SetHittable(true);
 
@@ -626,11 +724,13 @@ namespace Cainos.PixelArtTopDown_Basic
             blockedFor = 0f;
             visualBase = 0f;
 
+            airborneOrder.Remove(this);
             RestoreCollisions();
             ReleaseSupportsTo(0, true);
             SetHittable(true);
 
             if (proxyShown) SetLifted(false);
+            SortParts(false);   // after ReleaseSupportsTo: parts go back to the layer the player ends up on
             LiftParts(0f);
             if (shadowIsMade && shadowRenderer != null) shadowRenderer.enabled = false;
         }
@@ -725,6 +825,15 @@ namespace Cainos.PixelArtTopDown_Basic
 
             // A jump-on collider under the feet that we were not standing on yet: climb onto it.
             Collider2D climbOnto = FindNewSupport(feet, keep);
+
+            // Nothing new to climb onto: a support we only just left with the middle of the body, but still overlap, keeps us up.
+            // (Letting go would turn its collision back on inside the player and shove them off. With something new to climb onto the
+            // centre rule above stays, so hopping between two neighbouring jump-on things does not stack a level.)
+            if (climbOnto == null)
+            {
+                while (keep < supports.Count && StillOn(supports[keep], feet)) keep++;
+            }
+
             int destination = keep + (climbOnto != null ? 1 : 0);
             if (destination >= physicsByLevel.Length) return false;   // nothing higher to stand on
 
@@ -786,14 +895,23 @@ namespace Cainos.PixelArtTopDown_Basic
             return -1;
         }
 
-        // On the ground at a raised level: walking off the edge of what we stand on drops us a level.
+        // On the ground at a raised level: walking off the edge of what we stand on drops us a level, but only once the WHOLE body is off it.
+        // Getting ON needs the middle of the body over the collider; staying ON only needs any part of the body over it. Letting go while the
+        // body still overlaps would turn the collision back on inside the player, and the physics would shove them out: the snap.
         private void StepDownIfUnsupported()
         {
             Vector2 feet = FeetPoint;
             int keep = supports.Count;
-            while (keep > 0 && !IsUnder(supports[keep - 1], feet)) keep--;
+            while (keep > 0 && !StillOn(supports[keep - 1], feet)) keep--;
 
             if (keep != supports.Count) ReleaseSupportsTo(keep, true);
+        }
+
+        // Standing on it: the middle of the body is over it, or some part of the body still overlaps it.
+        private bool StillOn(Collider2D support, Vector2 feet)
+        {
+            if (support == null) return false;
+            return IsUnder(support, feet) || OverlapsBody(support);
         }
 
         // Lets go of every support above "keep": their collision comes back on.
@@ -846,13 +964,17 @@ namespace Cainos.PixelArtTopDown_Basic
         // After the Animator has chosen this frame's sprite.
         private void LateUpdate()
         {
+            bool inAir = airborne && drawAboveWhileAirborne;
             float lift = visualBase + arc;
-            bool lifted = body != null && lift > LiftEpsilon;
+
+            // In the air the copy is shown even at ground height (take-off, a blocked landing): it is the one that is drawn on top.
+            bool lifted = body != null && (lift > LiftEpsilon || inAir);
 
             if (lifted != proxyShown) SetLifted(lifted);
-            if (lifted) MirrorBody(lift);
+            if (lifted) MirrorBody(lift, inAir);
 
             LiftParts(lift);
+            SortParts(inAir);
             UpdateShadow();
         }
 
@@ -864,7 +986,7 @@ namespace Cainos.PixelArtTopDown_Basic
             proxyGroup.gameObject.SetActive(lifted);
         }
 
-        private void MirrorBody(float lift)
+        private void MirrorBody(float lift, bool inAir)
         {
             if (proxy.sprite != body.sprite) proxy.sprite = body.sprite;
             proxy.color = body.color;
@@ -874,9 +996,71 @@ namespace Cainos.PixelArtTopDown_Basic
             proxy.maskInteraction = body.maskInteraction;
             proxy.enabled = body.enabled;
 
-            proxyGroup.sortingLayerID = body.sortingLayerID;
-            proxyGroup.sortingOrder = body.sortingOrder;
+            if (inAir)
+            {
+                proxyGroup.sortingLayerID = airSortingByLevel[appliedLevel];
+                proxyGroup.sortingOrder = AirOrder;   // later take-off = higher
+            }
+            else
+            {
+                proxyGroup.sortingLayerID = body.sortingLayerID;
+                proxyGroup.sortingOrder = body.sortingOrder;
+            }
             proxy.transform.localPosition = LocalLift(proxyGroup.transform, lift);
+        }
+
+        // Parts that ride with the sprite (liftedParts) are drawn with it: while the sprite is in the air their renderers move to the air layer
+        // and keep their order relative to the body; afterwards they go back to the layer the player is on (a new one if the landing climbed
+        // a level). Renderers on some other layer (a UI element) are left alone, like everywhere else in this script.
+        private void SortParts(bool inAir)
+        {
+            if (liftedParts == null || liftedParts.Length == 0) return;
+
+            if (inAir)
+            {
+                if (!partsInAir) CaptureAirParts();
+                partsInAir = true;
+
+                int layer = airSortingByLevel[appliedLevel];
+                int shift = AirOrder - (body != null ? body.sortingOrder : 0);
+                for (int i = 0; i < airParts.Count; i++)
+                {
+                    if (airParts[i] == null) continue;
+                    airParts[i].sortingLayerID = layer;
+                    airParts[i].sortingOrder = shift + airPartOrders[i];
+                }
+            }
+            else if (partsInAir)
+            {
+                for (int i = 0; i < airParts.Count; i++)
+                {
+                    if (airParts[i] == null) continue;
+                    airParts[i].sortingLayerID = currentSorting;
+                    airParts[i].sortingOrder = airPartOrders[i];
+                }
+                airParts.Clear();
+                airPartOrders.Clear();
+                partsInAir = false;
+            }
+        }
+
+        private void CaptureAirParts()
+        {
+            airParts.Clear();
+            airPartOrders.Clear();
+
+            for (int i = 0; i < liftedParts.Length; i++)
+            {
+                if (liftedParts[i] == null) continue;
+
+                Renderer[] found = liftedParts[i].GetComponentsInChildren<Renderer>(true);
+                for (int r = 0; r < found.Length; r++)
+                {
+                    if (found[r].sortingLayerID != currentSorting) continue;
+                    airParts.Add(found[r]);
+                    airPartOrders.Add(found[r].sortingOrder);
+                }
+            }
         }
 
         // The shadow stays on the ground (or on top of what the player stands on) and shrinks the higher the sprite is.

@@ -319,6 +319,13 @@ public class LightsOutScreen : MonoBehaviour
 
         IsActive = true;       // from this moment the players hold still and the doors and hazards do nothing
         _wipeSeenSince = -1f;
+
+        // Nothing may be paused while this screen is up, and it can't wait for the fade: pausing is switched off NOW, not once the screen is dark.
+        // A pause menu that is open this very moment closes first (the world goes back to running, then this screen freezes it itself), because a
+        // pause still open behind this screen would hold Time.timeScale at 0 after Retry: the players could steer but the world wouldn't move.
+        PauseController.CloseForGameOver();
+        BlockPausing(true);
+        if (PauseManager.Instance != null && PauseManager.IsPaused) PauseManager.Instance.Resume();
         Debug.Log("LightsOutScreen: every player is down, so the game-over screen is starting.", this);
 
         LockPlayers(true);
@@ -967,6 +974,9 @@ public class LightsOutScreen : MonoBehaviour
 
         _root.SetActive(false);
         ReleaseWorld();
+
+        // Retry must never hand back a frozen game. If anything left the time at 0 and no pause menu is holding it there on purpose, put it back.
+        if (Time.timeScale <= 0f && !PauseController.IsPaused && !PauseManager.IsPaused) Time.timeScale = 1f;
     }
 
     // Every player that counts gets back to full health. SetHealth also tells the health bars.

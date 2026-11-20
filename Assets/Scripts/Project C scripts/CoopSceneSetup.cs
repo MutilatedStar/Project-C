@@ -1,3 +1,4 @@
+#if UNITY_EDITOR
 using System.Reflection;
 using System.Text;
 using UnityEditor;
@@ -639,3 +640,4 @@ public static class CoopSceneSetup
         Undo.DestroyObjectImmediate(go);
     }
 }
+#endif

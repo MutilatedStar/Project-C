@@ -56,6 +56,14 @@ namespace Cainos.PixelArtTopDown_Basic
 
         private bool isSprinting;
 
+        // PVP sword hits (SwordController hands these in): a short shove and a timed slow. Nothing outside PVP ever calls
+        // Knockback or ApplySlow, so in every other mode these stay at rest.
+        private const float KnockbackTime = 0.2f;   // seconds a shove lasts; it eases out over this time
+        private Vector2 knockVelocity;              // the shove's starting velocity
+        private float knockTimeLeft;
+        private float slowMultiplier = 1f;
+        private float slowTimeLeft;
+
         // Footstep state
         private float basePitch = 1f;
         private float stepTimer;
@@ -85,6 +93,44 @@ namespace Cainos.PixelArtTopDown_Basic
             if (rb != null && gameObject.activeInHierarchy) rb.linearVelocity = Vector2.zero;
             if (animator != null && animator.isActiveAndEnabled) animator.SetBool("IsMoving", false);
             wasStepping = false;
+            knockTimeLeft = 0f;
+        }
+
+        // ------------------------------------------------------------ PVP hits: shove and slow
+
+        /// <summary>
+        /// Shoves the character about <paramref name="distance"/> Unity units along <paramref name="direction"/> (walls still stop it).
+        /// Called by SwordController for a PVP sword hit only. The shove is added on top of the walking velocity, because this script
+        /// sets the velocity every frame and a plain push would be wiped out at once.
+        /// </summary>
+        public void Knockback(Vector2 direction, float distance)
+        {
+            if (direction.sqrMagnitude < 0.0001f || distance <= 0f) return;
+
+            // The shove eases out in a straight line, so it covers (start speed x time / 2): pick the start speed that covers the distance.
+            knockVelocity = direction.normalized * (2f * distance / KnockbackTime);
+            knockTimeLeft = KnockbackTime;
+        }
+
+        /// <summary>
+        /// Walk at <paramref name="factor"/> of normal speed for <paramref name="seconds"/> (0.5 = half speed). Called by SwordController for
+        /// a PVP hit from an ice sword. A new hit refreshes the time and keeps the stronger slow.
+        /// </summary>
+        public void ApplySlow(float factor, float seconds)
+        {
+            if (seconds <= 0f || factor >= 1f) return;
+
+            factor = Mathf.Clamp(factor, 0.05f, 1f);
+            slowMultiplier = slowTimeLeft > 0f ? Mathf.Min(slowMultiplier, factor) : factor;
+            slowTimeLeft = Mathf.Max(slowTimeLeft, seconds);
+        }
+
+        /// <summary>Ends any shove and slow right now (a PVP round ending calls this).</summary>
+        public void ClearHitEffects()
+        {
+            knockTimeLeft = 0f;
+            slowTimeLeft = 0f;
+            slowMultiplier = 1f;
         }
 
         private void Update()
@@ -95,6 +141,7 @@ namespace Cainos.PixelArtTopDown_Basic
                 rb.linearVelocity = Vector2.zero;
                 animator.SetBool("IsMoving", false);
                 wasStepping = false;
+                knockTimeLeft = 0f;
                 return;
             }
 
@@ -116,13 +163,28 @@ namespace Cainos.PixelArtTopDown_Basic
             float currentSpeed = isSprinting ? speed * sprintMultiplier : speed;
             if (jump != null) currentSpeed *= jump.SpeedMultiplier;
 
+            // PVP ice slow. It counts down here, so it holds still while this script is switched off for a pause.
+            if (slowTimeLeft > 0f)
+            {
+                slowTimeLeft -= Time.deltaTime;
+                currentSpeed *= slowMultiplier;
+            }
+
             // What the physics really did last step. Read BEFORE the velocity is set below: pushing against a wall
             // (velocity near zero) must stay silent, and a stuck player is reported.
             bool reallyMoving = moving && rb.linearVelocity.magnitude > currentSpeed * 0.1f;
             WarnIfStuck(moving, rb.linearVelocity);
 
+            // PVP shove: starts at full speed and eases to zero over KnockbackTime. Zero (and unused) outside PVP.
+            Vector2 shove = Vector2.zero;
+            if (knockTimeLeft > 0f)
+            {
+                shove = knockVelocity * (knockTimeLeft / KnockbackTime);
+                knockTimeLeft -= Time.deltaTime;
+            }
+
             // The velocity is applied FIRST, so a problem in the (purely cosmetic) footsteps can never stop the player.
-            rb.linearVelocity = currentSpeed * dir;
+            rb.linearVelocity = currentSpeed * dir + shove;
             HandleFootsteps(reallyMoving && !airborne);
         }
 
