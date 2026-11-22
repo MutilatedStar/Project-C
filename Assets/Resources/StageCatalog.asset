@@ -45,7 +45,7 @@ MonoBehaviour:
     thumbnail: {fileID: 21300000, guid: 2287f08868eb45e480a6dc02924d2178, type: 3}
     description: 
   - id: 5
-    displayName: 'Stage '
+    displayName: Stage 5
     mode: 0
     order: 5
     thumbnail: {fileID: 21300000, guid: 6f47a51ab1304d9fb45ad19363a84c72, type: 3}

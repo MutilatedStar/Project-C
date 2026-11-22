@@ -315411,7 +315411,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::StageDefinition
   stageId: 5
-  displayName: 'Stage '
+  displayName: Stage 5
   mode: 0
   order: 5
   thumbnail: {fileID: 21300000, guid: 6f47a51ab1304d9fb45ad19363a84c72, type: 3}
